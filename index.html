@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,7 +9,7 @@
   :root { padding-bottom: constant(safe-area-inset-bottom, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
   .collapsible { cursor: pointer; touch-action: manipulation; }
   .sticky-header thead th { position: sticky; top: 0; background-color: #f3f4f6; z-index: 10; }
-  input, select, button { font-size: 16px; } /* prevent iOS zoom */
+  input, select, button { font-size: 16px; }
   .modal { display: none; position: fixed; z-index: 50; left: 0; top: 0; width: 100%; height: 100%; overflow-y: auto; background: rgba(0,0,0,0.5); }
   .modal-content { background: white; margin: 5% auto; padding: 20px; border-radius: 12px; max-width: 700px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 9999px; }
@@ -27,7 +26,6 @@
     </div>
   </header>
 
-  <!-- Export / Import / Reset -->
   <div class="bg-white p-4 rounded shadow flex flex-wrap gap-3 justify-center">
     <button id="exportBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Export data as JSON">💾 Export JSON</button>
     <button id="exportCsvBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Export transactions as CSV">📄 Export CSV</button>
@@ -38,7 +36,6 @@
     <button id="resetBtn" class="bg-gray-700 hover:bg-gray-800 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Reset data with backup">🧹 Reset (Keep backup)</button>
   </div>
 
-  <!-- Add Entry Form -->
   <div class="bg-white p-4 rounded shadow">
     <div class="flex justify-between items-center mb-3">
       <h2 class="text-lg sm:text-xl font-semibold">➕ Add / Edit Entry</h2>
@@ -60,35 +57,25 @@
         <option value="Asset">Asset (Debit)</option>
         <option value="Liability">Liability (Credit)</option>
       </select>
-
-      <!-- Category -->
       <div>
         <select id="bsCategory" class="border rounded p-3 w-full" aria-label="Category"></select>
         <input id="newCategory" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Category" aria-label="New category" />
       </div>
-
-      <!-- Subcategory -->
       <div>
         <select id="bsSubcat" class="border rounded p-3 w-full" aria-label="Subcategory"></select>
         <input id="newSubcat" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Subcategory (optional)" aria-label="New subcategory" />
       </div>
-
-      <!-- Name / Sub-account -->
       <div>
         <select id="bsName" class="border rounded p-3 w-full" aria-label="Name or sub-account"></select>
         <input id="newName" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Sub-Account / Name (optional)" aria-label="New name or sub-account" />
       </div>
-
       <input id="bsAmount" type="number" inputmode="decimal" step="0.01" min="0" class="border rounded p-3 w-full" placeholder="Amount" required aria-label="Amount" />
       <input id="bsMonth" type="month" class="border rounded p-3 w-full" required aria-label="Month" />
-
       <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded w-full sm:w-auto" type="submit" aria-label="Save entry">Save</button>
     </form>
-
     <p id="formHint" class="text-sm text-gray-500 mt-2">Tip: Subcategory & sub-account are optional. If left blank, the posting hits the higher level.</p>
   </div>
 
-  <!-- Month Selector -->
   <div class="bg-white p-4 rounded shadow flex flex-col sm:flex-row gap-4 items-center">
     <label class="flex items-center gap-2 w-full sm:w-auto">
       View Month:
@@ -98,7 +85,6 @@
     <button id="copyLastMonthBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Copy last month's data">📋 Copy Last Month</button>
   </div>
 
-  <!-- Balance Sheet -->
   <div class="bg-white p-4 rounded shadow">
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-lg sm:text-xl font-semibold">Balance Sheet</h2>
@@ -117,7 +103,6 @@
     </div>
   </div>
 
-  <!-- Transactions -->
   <div class="bg-white p-4 rounded shadow overflow-x-auto">
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-lg sm:text-xl font-semibold">Transactions</h2>
@@ -153,7 +138,10 @@
 </div>
 
 <script>
-/* ===== Storage keys & helpers ===== */
+// --- GOOGLE SHEETS SETTINGS --- //
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw4dlMUkR0LxEWdHb00CXaOS4UuDpwNMe0QB8jgexIa1OeUlImvJqjUVzrAN5WhxrBL/exec";
+
+// --- Storage keys & helpers --- //
 const DATA_VERSION = '1.3';
 const LS_ACCOUNTS = 'bs_accounts_v1';
 const LS_BALANCES = 'bs_balances_v1';
@@ -176,7 +164,23 @@ const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const sanitize = (s) => (s || '').trim().replace(/\s+/g, ' ');
 
-/* ===== App state ===== */
+// --- Google Sheets Integration --- //
+function saveToGoogleSheets(entry) {
+  fetch(GOOGLE_SCRIPT_URL, {
+    method: "POST",
+    body: JSON.stringify(entry),
+    headers: { "Content-Type": "application/json" }
+  })
+  .then(res => res.text())
+  .then(msg => {
+    // Success
+  })
+  .catch(err => {
+    // Failure
+  });
+}
+
+// --- App state --- //
 let ACCOUNTS = read(LS_ACCOUNTS, []);
 let BALANCES = read(LS_BALANCES, {});
 let TRANSACTIONS = read(LS_TRANSACTIONS, []);
@@ -185,7 +189,7 @@ let editId = null;
 let LAST_SEL = read(LS_LASTSEL, { type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
 const setLastSel = (partial) => { LAST_SEL = { ...LAST_SEL, ...partial }; write(LS_LASTSEL, LAST_SEL); };
 
-/* ===== Migration ===== */
+// --- Migration --- //
 (function migrate(){
   let touched = false;
   ACCOUNTS.forEach(a => { if (a.subcategory === undefined) { a.subcategory = ''; touched = true; }});
@@ -197,7 +201,7 @@ const setLastSel = (partial) => { LAST_SEL = { ...LAST_SEL, ...partial }; write(
   document.getElementById('dataVersion').textContent = DATA_VERSION;
 })();
 
-/* ===== Accounts & posting ===== */
+// --- Accounts & posting --- //
 function getOrCreateAccount(type, category, subcategory, name) {
   const sub = sanitize(subcategory) || '';
   const nm = sanitize(name) || '';
@@ -242,10 +246,10 @@ function addBSLine({ id, type, category, subcategory, name, amount, month }) {
     alert('Subcategory must contain only letters, numbers, or spaces.');
     return false;
   }
- if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) {
-  alert('Name must contain only letters, numbers, spaces, or slashes.');
-  return false;
-}
+  if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) {
+    alert('Name must contain only letters, numbers, spaces, or slashes.');
+    return false;
+  }
   if (amount <= 0) {
     alert('Amount must be greater than zero.');
     return false;
@@ -270,7 +274,7 @@ function addBSLine({ id, type, category, subcategory, name, amount, month }) {
   return true;
 }
 
-/* ===== Delete ===== */
+// --- Delete functions --- //
 function deleteTransaction(id) {
   const tx = TRANSACTIONS.find(t => t.id === id);
   if (!tx) return;
@@ -302,7 +306,7 @@ function deleteCategory(category, subcategory = '', name = '') {
   return true;
 }
 
-/* ===== Totals & grouping ===== */
+// --- Totals & grouping --- //
 function totalsForMonth(month) {
   const entries = BALANCES[month] || {};
   let assets = 0, liabilities = 0;
@@ -350,7 +354,7 @@ function groupTree(month, type) {
   return tree;
 }
 
-/* ===== Render helpers ===== */
+// --- Render helpers --- //
 function formatMoney(v) {
   const cur = SETTINGS.currency || 'QAR';
   return `${cur} ${(v || 0).toFixed(2)}`;
@@ -472,7 +476,7 @@ function render(month) {
   integrityCheck(month);
 }
 
-/* ===== Month picker ===== */
+// --- Month picker --- //
 function allMonths() {
   const set = new Set(Object.keys(BALANCES));
   const yM = new Date().toISOString().slice(0, 7);
@@ -487,7 +491,7 @@ function refreshMonthPicker(selMonth) {
   sel.value = selMonth || months[months.length - 1] || '';
 }
 
-/* ===== Edit loader ===== */
+// --- Edit loader --- //
 function startEdit(id) {
   const tx = TRANSACTIONS.find(t => t.id === id);
   if (!tx) return;
@@ -519,7 +523,7 @@ function startEdit(id) {
   document.getElementById('bsMonth').value = tx.month;
 }
 
-/* ===== Dropdown helpers ===== */
+// --- Dropdown helpers --- //
 function existingCategories() {
   return [...new Set(ACCOUNTS.map(a => a.category).filter(c => c && c !== 'Offset'))].sort();
 }
@@ -587,7 +591,7 @@ function updateNameDropdown(category, subcategory) {
   }
 }
 
-/* ===== Export / Import ===== */
+// --- Export / Import --- //
 function downloadBlob(filename, text, mime='application/octet-stream') {
   const blob = new Blob([text], { type: mime });
   const a = document.createElement('a');
@@ -699,7 +703,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   render(m);
 });
 
-/* ===== Form events ===== */
+// --- Form events --- //
 const catSelEl = document.getElementById('bsCategory');
 catSelEl.addEventListener('change', (e) => {
   const val = e.target.value;
@@ -761,39 +765,21 @@ document.getElementById('bsForm').addEventListener('submit', e => {
     if (oldTx) reverseTransaction(oldTx);
   }
 
-if (addBSLine({ id: editId, type, category, subcategory, name, amount, month })) {
-  // Send to Google Sheets
-  saveToGoogleSheets({ type, category, subcategory, name, amount, month }); // <-- NEW
+  if (addBSLine({ id: editId, type, category, subcategory, name, amount, month })) {
+    // Send to Google Sheets:
+    saveToGoogleSheets({ type, category, subcategory, name, amount, month });
 
-  editId = null;
-  refreshMonthPicker(month);
-  render(month);
-  document.getElementById('bsAmount').value = '';
-  document.getElementById('newCategory').classList.add('hidden');
-  document.getElementById('newSubcat').classList.add('hidden');
-  document.getElementById('newName').classList.add('hidden');
-}
-);
+    editId = null;
+    refreshMonthPicker(month);
+    render(month);
+    document.getElementById('bsAmount').value = '';
+    document.getElementById('newCategory').classList.add('hidden');
+    document.getElementById('newSubcat').classList.add('hidden');
+    document.getElementById('newName').classList.add('hidden');
+  }
+});
 
-function saveToGoogleSheets(entry) {
-  fetch("https://script.google.com/macros/s/AKfycbw4dlMUkR0LxEWdHb00CXaOS4UuDpwNMe0QB8jgexIa1OeUlImvJqjUVzrAN5WhxrBL/exec", {
-    method: "POST",
-    body: JSON.stringify(entry),
-    headers: { "Content-Type": "application/json" }
-  })
-  .then(res => res.text())
-  .then(msg => {
-    console.log("Google Sheets Save:", msg);
-    // Optionally, show an alert
-    // alert("Saved to Google Sheets!");
-  })
-  .catch(err => {
-    console.error("Google Sheets Save Failed: " + err);
-  });
-}
-
-
-/* ===== Settings ===== */
+// --- Settings --- //
 document.getElementById('currencySel').addEventListener('change', (e) => {
   SETTINGS.currency = e.target.value;
   write(LS_SETTINGS, SETTINGS);
@@ -806,9 +792,8 @@ const monthInp = document.getElementById('bsMonth');
 typeSel.addEventListener('change', (e) => setLastSel({ type: e.target.value }));
 monthInp.addEventListener('change', (e) => setLastSel({ month: e.target.value }));
 
-/* ===== Month change & copy last month ===== */
+// --- Month change & copy last month --- //
 document.getElementById('viewMonth').addEventListener('change', e => render(e.target.value));
-
 document.getElementById('addCurrentMonthBtn').addEventListener('click', () => {
   const m = new Date().toISOString().slice(0,7);
   if (!BALANCES[m]) BALANCES[m] = {};
@@ -816,7 +801,6 @@ document.getElementById('addCurrentMonthBtn').addEventListener('click', () => {
   refreshMonthPicker(m);
   render(m);
 });
-
 document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
   const months = Array.from(new Set(Object.keys(BALANCES).concat([new Date().toISOString().slice(0,7)]))).sort();
   if (!months.length) return alert("No previous month to copy.");
@@ -824,7 +808,6 @@ document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
   const idx = months.indexOf(current) - 1;
   if (idx < 0) return alert("No previous month data.");
   const prev = months[idx];
-
   TRANSACTIONS.filter(t => t.month === prev).forEach(t => {
     addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current });
   });
@@ -833,7 +816,6 @@ document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
   render(current);
   alert("Copied last month's data!");
 });
-
 document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
   const month = document.getElementById('viewMonth').value;
   if (!month) return;
@@ -842,7 +824,7 @@ document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
   }
 });
 
-/* ===== Manage Categories modal ===== */
+// --- Manage Categories modal --- //
 const manageBtn = document.getElementById('manageCategoriesBtn');
 const modal = document.getElementById('categoryModal');
 const closeModalBtn = document.getElementById('closeModalBtn');
@@ -854,7 +836,6 @@ manageBtn.addEventListener('click', () => {
   renderCategoryManager();
   modal.style.display = 'block';
 });
-
 closeModalBtn.addEventListener('click', () => { modal.style.display = 'none'; });
 window.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
 modal.addEventListener('keydown', (e) => {
@@ -1046,7 +1027,7 @@ saveChangesBtn.addEventListener('click', () => {
   alert('Categories updated successfully');
 });
 
-/* ===== Init ===== */
+// --- Init --- //
 (function init() {
   const today = new Date();
   const yM = today.toISOString().slice(0, 7);
@@ -1066,6 +1047,5 @@ saveChangesBtn.addEventListener('click', () => {
   }
 })();
 </script>
-
 </body>
 </html>
