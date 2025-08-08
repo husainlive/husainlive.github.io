@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Balance Sheet Module</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { padding-bottom: constant(safe-area-inset-bottom, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
+  .collapsible { cursor: pointer; touch-action: manipulation; }
+  .sticky-header thead th { position: sticky; top: 0; background-color: #f3f4f6; z-index: 10; }
+  input, select, button { font-size: 16px; } /* prevent iOS zoom */
+  .modal { display: none; position: fixed; z-index: 50; left: 0; top: 0; width: 100%; height: 100%; overflow-y: auto; background: rgba(0,0,0,0.5); }
+  .modal-content { background: white; margin: 5% auto; padding: 20px; border-radius: 12px; max-width: 700px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 9999px; }
+</style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div class="max-w-6xl mx-auto p-4 space-y-6">
+  <header class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+    <h1 class="text-2xl sm:text-3xl font-bold">📊 Balance Sheet — Double Entry</h1>
+    <div class="flex flex-wrap gap-2 items-center">
+      <span class="text-sm text-gray-600">Data v<span id="dataVersion">1.3</span></span>
+      <span id="integrityBadge" class="badge bg-gray-200 text-gray-800">Checking…</span>
+    </div>
+  </header>
+
+  <!-- Export / Import / Reset -->
+  <div class="bg-white p-4 rounded shadow flex flex-wrap gap-3 justify-center">
+    <button id="exportBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Export data as JSON">💾 Export JSON</button>
+    <button id="exportCsvBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Export transactions as CSV">📄 Export CSV</button>
+    <input type="file" id="importFile" accept=".json" class="hidden" aria-label="Import JSON file" />
+    <input type="file" id="importCsvFile" accept=".csv" class="hidden" aria-label="Import CSV file" />
+    <button id="importBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Import data from JSON">📂 Import JSON</button>
+    <button id="importCsvBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Import transactions from CSV">📂 Import CSV</button>
+    <button id="resetBtn" class="bg-gray-700 hover:bg-gray-800 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Reset data with backup">🧹 Reset (Keep backup)</button>
+  </div>
+
+  <!-- Add Entry Form -->
+  <div class="bg-white p-4 rounded shadow">
+    <div class="flex justify-between items-center mb-3">
+      <h2 class="text-lg sm:text-xl font-semibold">➕ Add / Edit Entry</h2>
+      <div class="flex gap-2 items-center">
+        <label class="text-sm text-gray-600" for="currencySel">Currency</label>
+        <select id="currencySel" class="border rounded p-2">
+          <option value="QAR">QAR</option>
+          <option value="USD">USD</option>
+          <option value="AED">AED</option>
+          <option value="SAR">SAR</option>
+          <option value="INR">INR</option>
+        </select>
+        <button id="manageCategoriesBtn" class="bg-gray-700 hover:bg-gray-800 text-white px-3 py-2 rounded" aria-label="Manage categories">⚙ Manage Categories</button>
+      </div>
+    </div>
+
+    <form id="bsForm" class="grid grid-cols-1 sm:grid-cols-8 gap-3">
+      <select id="bsType" class="border rounded p-3 w-full" required aria-label="Account type">
+        <option value="Asset">Asset (Debit)</option>
+        <option value="Liability">Liability (Credit)</option>
+      </select>
+
+      <!-- Category -->
+      <div>
+        <select id="bsCategory" class="border rounded p-3 w-full" aria-label="Category"></select>
+        <input id="newCategory" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Category" aria-label="New category" />
+      </div>
+
+      <!-- Subcategory -->
+      <div>
+        <select id="bsSubcat" class="border rounded p-3 w-full" aria-label="Subcategory"></select>
+        <input id="newSubcat" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Subcategory (optional)" aria-label="New subcategory" />
+      </div>
+
+      <!-- Name / Sub-account -->
+      <div>
+        <select id="bsName" class="border rounded p-3 w-full" aria-label="Name or sub-account"></select>
+        <input id="newName" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Sub-Account / Name (optional)" aria-label="New name or sub-account" />
+      </div>
+
+      <input id="bsAmount" type="number" inputmode="decimal" step="0.01" min="0" class="border rounded p-3 w-full" placeholder="Amount" required aria-label="Amount" />
+      <input id="bsMonth" type="month" class="border rounded p-3 w-full" required aria-label="Month" />
+
+      <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded w-full sm:w-auto" type="submit" aria-label="Save entry">Save</button>
+    </form>
+
+    <p id="formHint" class="text-sm text-gray-500 mt-2">Tip: Subcategory & sub-account are optional. If left blank, the posting hits the higher level.</p>
+  </div>
+
+  <!-- Month Selector -->
+  <div class="bg-white p-4 rounded shadow flex flex-col sm:flex-row gap-4 items-center">
+    <label class="flex items-center gap-2 w-full sm:w-auto">
+      View Month:
+      <select id="viewMonth" class="border rounded p-3 w-full" aria-label="Select month to view"></select>
+    </label>
+    <button id="addCurrentMonthBtn" class="bg-sky-600 hover:bg-sky-700 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Add current month">➕ Add Current Month</button>
+    <button id="copyLastMonthBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-3 rounded w-full sm:w-auto" aria-label="Copy last month's data">📋 Copy Last Month</button>
+  </div>
+
+  <!-- Balance Sheet -->
+  <div class="bg-white p-4 rounded shadow">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg sm:text-xl font-semibold">Balance Sheet</h2>
+      <div id="monthBadge" class="badge bg-gray-100 text-gray-700">—</div>
+    </div>
+    <div id="bsSummary" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 text-center font-semibold"></div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      <div>
+        <h3 class="text-lg font-semibold text-green-700">Assets</h3>
+        <div id="assetsTree" class="mt-2"></div>
+      </div>
+      <div>
+        <h3 class="text-lg font-semibold text-red-700">Liabilities</h3>
+        <div id="liabilitiesTree" class="mt-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transactions -->
+  <div class="bg-white p-4 rounded shadow overflow-x-auto">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg sm:text-xl font-semibold">Transactions</h2>
+      <button id="deleteAllTxBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded" aria-label="Clear all transactions for month">🗑️ Clear Month</button>
+    </div>
+    <table class="w-full border-collapse sticky-header min-w-[820px]">
+      <thead>
+        <tr class="bg-gray-200">
+          <th class="border p-2">Type</th>
+          <th class="border p-2">Category</th>
+          <th class="border p-2">Subcategory</th>
+          <th class="border p-2">Name</th>
+          <th class="border p-2">Amount</th>
+          <th class="border p-2">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="transactionList"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Category Manager Modal -->
+<div id="categoryModal" class="modal" role="dialog" aria-labelledby="categoryModalTitle">
+  <div class="modal-content">
+    <h2 id="categoryModalTitle" class="text-xl font-semibold mb-4">Manage Categories</h2>
+    <p class="text-sm text-gray-600 mb-3">Rename or delete categories, subcategories, and sub-accounts. This updates display names without changing historical balances.</p>
+    <div id="categoryList" class="space-y-4 max-h-[60vh] overflow-y-auto"></div>
+    <div class="mt-4 flex justify-end gap-2">
+      <button id="closeModalBtn" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded" aria-label="Close modal">Cancel</button>
+      <button id="saveCategoryChangesBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded" aria-label="Save category changes">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Storage keys & helpers ===== */
+const DATA_VERSION = '1.3';
+const LS_ACCOUNTS = 'bs_accounts_v1';
+const LS_BALANCES = 'bs_balances_v1';
+const LS_TRANSACTIONS = 'bs_transactions_v1';
+const LS_SETTINGS = 'bs_settings_v1';
+const LS_LASTSEL = 'bs_last_selection_v1';
+
+const uuid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const read = (k, fb) => {
+  try {
+    const data = JSON.parse(localStorage.getItem(k));
+    return data ?? fb;
+  } catch (e) {
+    console.error(`Failed to read ${k}:`, e);
+    alert(`Error loading data for ${k}. Resetting to default.`);
+    return fb;
+  }
+};
+const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const sanitize = (s) => (s || '').trim().replace(/\s+/g, ' ');
+
+/* ===== App state ===== */
+let ACCOUNTS = read(LS_ACCOUNTS, []);
+let BALANCES = read(LS_BALANCES, {});
+let TRANSACTIONS = read(LS_TRANSACTIONS, []);
+let SETTINGS = read(LS_SETTINGS, { currency: 'QAR' });
+let editId = null;
+let LAST_SEL = read(LS_LASTSEL, { type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
+const setLastSel = (partial) => { LAST_SEL = { ...LAST_SEL, ...partial }; write(LS_LASTSEL, LAST_SEL); };
+
+/* ===== Migration ===== */
+(function migrate(){
+  let touched = false;
+  ACCOUNTS.forEach(a => { if (a.subcategory === undefined) { a.subcategory = ''; touched = true; }});
+  TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) { t.subcategory = ''; touched = true; }});
+  if (touched) {
+    write(LS_ACCOUNTS, ACCOUNTS);
+    write(LS_TRANSACTIONS, TRANSACTIONS);
+  }
+  document.getElementById('dataVersion').textContent = DATA_VERSION;
+})();
+
+/* ===== Accounts & posting ===== */
+function getOrCreateAccount(type, category, subcategory, name) {
+  const sub = sanitize(subcategory) || '';
+  const nm = sanitize(name) || '';
+  let acc = ACCOUNTS.find(a => a.type === type && a.category === category && (a.subcategory||'') === sub && (a.name||'') === nm);
+  if (!acc) {
+    acc = { id: uuid(), type, category, subcategory: sub, name: nm };
+    ACCOUNTS.push(acc);
+    write(LS_ACCOUNTS, ACCOUNTS);
+  }
+  return acc;
+}
+
+function post(accountId, month, signedAmount) {
+  if (!BALANCES[month]) BALANCES[month] = {};
+  if (!BALANCES[month][accountId]) BALANCES[month][accountId] = 0;
+  BALANCES[month][accountId] = round2(BALANCES[month][accountId] + signedAmount);
+}
+
+function reverseTransaction(tx) {
+  const sign = tx.type === 'Asset' ? 1 : -1;
+  post(tx.mainId, tx.month, -sign * tx.amount);
+  post(tx.offsetId, tx.month, sign * tx.amount);
+}
+
+function rebuildBalances() {
+  BALANCES = {};
+  TRANSACTIONS.forEach(t => {
+    const sign = t.type === 'Asset' ? 1 : -1;
+    post(t.mainId, t.month, sign * t.amount);
+    post(t.offsetId, t.month, -sign * t.amount);
+  });
+  write(LS_BALANCES, BALANCES);
+}
+
+function addBSLine({ id, type, category, subcategory, name, amount, month }) {
+  const fallbackName = sanitize(name) || '';
+  if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) {
+    alert('Category must be non-empty and contain only letters, numbers, or spaces.');
+    return false;
+  }
+  if (subcategory && !subcategory.match(/^[a-zA-Z0-9 ]+$/)) {
+    alert('Subcategory must contain only letters, numbers, or spaces.');
+    return false;
+  }
+ if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) {
+  alert('Name must contain only letters, numbers, spaces, or slashes.');
+  return false;
+}
+  if (amount <= 0) {
+    alert('Amount must be greater than zero.');
+    return false;
+  }
+  const main = getOrCreateAccount(type, category, subcategory || '', fallbackName);
+  const offset = getOrCreateAccount(type === 'Asset' ? 'Liability' : 'Asset', 'Offset', '', 'AutoOffset');
+  const sign = type === 'Asset' ? 1 : -1;
+
+  post(main.id, month, sign * amount);
+  post(offset.id, month, -sign * amount);
+
+  const newTx = { id: id || uuid(), type, category, subcategory: subcategory || '', name: fallbackName, amount, month, mainId: main.id, offsetId: offset.id };
+  if (id) {
+    const idx = TRANSACTIONS.findIndex(t => t.id === id);
+    TRANSACTIONS[idx] = newTx;
+  } else {
+    TRANSACTIONS.push(newTx);
+  }
+
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  return true;
+}
+
+/* ===== Delete ===== */
+function deleteTransaction(id) {
+  const tx = TRANSACTIONS.find(t => t.id === id);
+  if (!tx) return;
+  reverseTransaction(tx);
+  TRANSACTIONS = TRANSACTIONS.filter(t => t.id !== id);
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  render(tx.month);
+}
+
+function deleteAllForMonth(month) {
+  const list = TRANSACTIONS.filter(t => t.month === month);
+  list.forEach(reverseTransaction);
+  TRANSACTIONS = TRANSACTIONS.filter(t => t.month !== month);
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  render(month);
+}
+
+function deleteCategory(category, subcategory = '', name = '') {
+  const sub = sanitize(subcategory) || '';
+  const nm = sanitize(name) || '';
+  if (TRANSACTIONS.some(t => t.category === category && (t.subcategory||'') === sub && (t.name||'') === nm)) {
+    alert('Cannot delete: Category is in use.');
+    return false;
+  }
+  ACCOUNTS = ACCOUNTS.filter(a => a.category !== category || (a.subcategory||'') !== sub || (a.name||'') !== nm);
+  write(LS_ACCOUNTS, ACCOUNTS);
+  return true;
+}
+
+/* ===== Totals & grouping ===== */
+function totalsForMonth(month) {
+  const entries = BALANCES[month] || {};
+  let assets = 0, liabilities = 0;
+  for (const [id, bal] of Object.entries(entries)) {
+    const acc = ACCOUNTS.find(a => a.id === id);
+    if (!acc || acc.category === 'Offset') continue;
+    if (acc.type === 'Asset') assets += bal; else liabilities += -bal;
+  }
+  return { assets: round2(assets), liabilities: round2(liabilities) };
+}
+
+function integrityCheck(month) {
+  const { assets, liabilities } = totalsForMonth(month);
+  const diff = round2(assets - liabilities);
+  const badge = document.getElementById('integrityBadge');
+  if (!month || (!assets && !liabilities)) {
+    badge.textContent = 'No data';
+    badge.className = 'badge bg-gray-200 text-gray-800';
+    return;
+  }
+  if (Math.abs(diff) < 0.01) {
+    badge.textContent = 'Balanced';
+    badge.className = 'badge bg-green-100 text-green-800';
+  } else {
+    badge.textContent = `⚠️ Off by ${formatMoney(Math.abs(diff))}`;
+    badge.className = 'badge bg-yellow-100 text-yellow-800';
+  }
+}
+
+function groupTree(month, type) {
+  const entries = BALANCES[month] || {};
+  const tree = {};
+  for (const [id, bal] of Object.entries(entries)) {
+    const acc = ACCOUNTS.find(a => a.id === id);
+    if (!acc || acc.type !== type || acc.category === 'Offset') continue;
+    const amount = type === 'Asset' ? Math.max(0, bal) : Math.max(0, -bal);
+    if (amount <= 0) continue;
+    const cat = acc.category || '(uncategorized)';
+    const sub = (acc.subcategory && acc.subcategory.trim()) ? acc.subcategory : '(none)';
+    const nm = (acc.name && acc.name.trim()) ? acc.name : '';
+    if (!tree[cat]) tree[cat] = {};
+    if (!tree[cat][sub]) tree[cat][sub] = [];
+    tree[cat][sub].push({ name: nm, amount });
+  }
+  return tree;
+}
+
+/* ===== Render helpers ===== */
+function formatMoney(v) {
+  const cur = SETTINGS.currency || 'QAR';
+  return `${cur} ${(v || 0).toFixed(2)}`;
+}
+
+function renderTree(containerId, tree) {
+  const c = document.getElementById(containerId);
+  c.innerHTML = '';
+  Object.keys(tree).sort().forEach(cat => {
+    const subMap = tree[cat];
+    const catTotal = Object.values(subMap).flat().reduce((s, r) => s + r.amount, 0);
+
+    const catWrap = document.createElement('div');
+    const catHeader = document.createElement('div');
+    catHeader.className = 'collapsible font-semibold bg-gray-100 px-3 py-2 rounded flex items-center justify-between';
+    catHeader.setAttribute('tabindex', '0');
+    catHeader.setAttribute('aria-expanded', 'false');
+    catHeader.innerHTML = `<span>${cat}</span><span>${formatMoney(catTotal)}</span>`;
+
+    const subContainer = document.createElement('div');
+    subContainer.className = 'pl-3 hidden';
+    subContainer.setAttribute('aria-hidden', 'true');
+
+    Object.keys(subMap).sort().forEach(sub => {
+      const rows = subMap[sub];
+      const subTotal = rows.reduce((s, r) => s + r.amount, 0);
+
+      const subWrap = document.createElement('div');
+      const subHeader = document.createElement('div');
+      subHeader.className = 'collapsible bg-gray-50 px-3 py-2 rounded flex items-center justify-between mt-2';
+      subHeader.setAttribute('tabindex', '0');
+      subHeader.setAttribute('aria-expanded', 'false');
+      subHeader.innerHTML = `<span>${sub === '(none)' ? '<em>no subcategory</em>' : sub}</span><span>${formatMoney(subTotal)}</span>`;
+
+      const ul = document.createElement('ul');
+      ul.className = 'list-disc pl-6 hidden';
+      ul.setAttribute('aria-hidden', 'true');
+
+      rows.sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(r => {
+        const li = document.createElement('li');
+        const display = r.name ? r.name : '<em>(posted at subcategory level)</em>';
+        li.className = 'py-0.5';
+        li.innerHTML = `<span>${display}</span>: <span class="font-medium">${formatMoney(r.amount)}</span>`;
+        ul.appendChild(li);
+      });
+
+      subHeader.addEventListener('click', () => {
+        ul.classList.toggle('hidden');
+        ul.setAttribute('aria-hidden', !ul.classList.contains('hidden'));
+        subHeader.setAttribute('aria-expanded', !ul.classList.contains('hidden'));
+      });
+      subHeader.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          ul.classList.toggle('hidden');
+          ul.setAttribute('aria-hidden', !ul.classList.contains('hidden'));
+          subHeader.setAttribute('aria-expanded', !ul.classList.contains('hidden'));
+        }
+      });
+
+      subWrap.appendChild(subHeader);
+      subWrap.appendChild(ul);
+      subContainer.appendChild(subWrap);
+    });
+
+    catHeader.addEventListener('click', () => {
+      subContainer.classList.toggle('hidden');
+      subContainer.setAttribute('aria-hidden', !subContainer.classList.contains('hidden'));
+      catHeader.setAttribute('aria-expanded', !subContainer.classList.contains('hidden'));
+    });
+    catHeader.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        subContainer.classList.toggle('hidden');
+        subContainer.setAttribute('aria-hidden', !subContainer.classList.contains('hidden'));
+        catHeader.setAttribute('aria-expanded', !subContainer.classList.contains('hidden'));
+      }
+    });
+
+    catWrap.appendChild(catHeader);
+    catWrap.appendChild(subContainer);
+    c.appendChild(catWrap);
+  });
+}
+
+function renderTransactions(month) {
+  const tbody = document.getElementById('transactionList');
+  tbody.innerHTML = '';
+  TRANSACTIONS.filter(t => t.month === month).forEach(tx => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="border p-2">${tx.type}</td>
+      <td class="border p-2">${tx.category}</td>
+      <td class="border p-2">${tx.subcategory || '-'}</td>
+      <td class="border p-2">${tx.name || '-'}</td>
+      <td class="border p-2">${formatMoney(tx.amount)}</td>
+      <td class="border p-2 space-x-2">
+        <button class="bg-blue-500 text-white px-2 py-1 rounded" onclick="startEdit('${tx.id}')" aria-label="Edit transaction ${tx.id}">Edit</button>
+        <button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteTransaction('${tx.id}')" aria-label="Delete transaction ${tx.id}">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function render(month) {
+  const monthBadge = document.getElementById('monthBadge');
+  monthBadge.textContent = month || '—';
+  const { assets, liabilities } = totalsForMonth(month);
+  document.getElementById('bsSummary').innerHTML = `
+    <div class="text-green-700">Total Assets: ${formatMoney(assets)}</div>
+    <div class="text-red-700">Total Liabilities: ${formatMoney(liabilities)}</div>
+    <div class="text-blue-700">Net Worth: ${formatMoney(assets - liabilities)}</div>
+  `;
+  renderTree('assetsTree', groupTree(month, 'Asset'));
+  renderTree('liabilitiesTree', groupTree(month, 'Liability'));
+  renderTransactions(month);
+  updateCategoryDropdown();
+  integrityCheck(month);
+}
+
+/* ===== Month picker ===== */
+function allMonths() {
+  const set = new Set(Object.keys(BALANCES));
+  const yM = new Date().toISOString().slice(0, 7);
+  set.add(yM);
+  return Array.from(set).sort();
+}
+
+function refreshMonthPicker(selMonth) {
+  const sel = document.getElementById('viewMonth');
+  const months = allMonths();
+  sel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join('');
+  sel.value = selMonth || months[months.length - 1] || '';
+}
+
+/* ===== Edit loader ===== */
+function startEdit(id) {
+  const tx = TRANSACTIONS.find(t => t.id === id);
+  if (!tx) return;
+  editId = id;
+  document.getElementById('bsType').value = tx.type;
+  ensureCategoryExists(tx.category);
+  document.getElementById('bsCategory').value = tx.category;
+
+  updateSubcatDropdown(tx.category);
+  const subSel = document.getElementById('bsSubcat');
+  if (![...subSel.options].some(o => o.value === (tx.subcategory || ''))) {
+    const opt = document.createElement('option');
+    opt.value = tx.subcategory || '';
+    opt.textContent = tx.subcategory || '';
+    subSel.prepend(opt);
+  }
+  document.getElementById('bsSubcat').value = tx.subcategory || '';
+
+  updateNameDropdown(tx.category, tx.subcategory || '');
+  const nameSel = document.getElementById('bsName');
+  if (![...nameSel.options].some(o => o.value === (tx.name || ''))) {
+    const opt2 = document.createElement('option');
+    opt2.value = tx.name || '';
+    opt2.textContent = tx.name || '';
+    nameSel.prepend(opt2);
+  }
+  document.getElementById('bsName').value = tx.name || '';
+  document.getElementById('bsAmount').value = tx.amount;
+  document.getElementById('bsMonth').value = tx.month;
+}
+
+/* ===== Dropdown helpers ===== */
+function existingCategories() {
+  return [...new Set(ACCOUNTS.map(a => a.category).filter(c => c && c !== 'Offset'))].sort();
+}
+
+function existingSubcategories(category) {
+  return [...new Set(ACCOUNTS
+    .filter(a => a.category === category && a.subcategory && a.subcategory.trim())
+    .map(a => a.subcategory))].sort();
+}
+
+function existingNames(category, subcategory) {
+  return [...new Set(ACCOUNTS
+    .filter(a => a.category === category && (a.subcategory||'') === (subcategory||'') && a.name && a.name.trim())
+    .map(a => a.name))].sort();
+}
+
+function ensureCategoryExists(cat) {
+  if (!cat || cat === 'Offset') return;
+  if (!existingCategories().includes(cat)) {
+    getOrCreateAccount('Asset', cat, '', '');
+    write(LS_ACCOUNTS, ACCOUNTS);
+  }
+}
+
+function updateCategoryDropdown() {
+  const catSel = document.getElementById('bsCategory');
+  const categories = existingCategories();
+  if (!categories.length) {
+    ['Cash','Receivables','Investments','Payables','Accruals','Equity'].forEach(c => {
+      const t = ['Cash','Receivables','Investments'].includes(c) ? 'Asset' : 'Liability';
+      getOrCreateAccount(t, c, '', '');
+    });
+    write(LS_ACCOUNTS, ACCOUNTS);
+  }
+  const cats = existingCategories();
+  catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('') + '<option value="new">➕ New</option>';
+  if (LAST_SEL.category && cats.includes(LAST_SEL.category)) {
+    catSel.value = LAST_SEL.category;
+  } else if (!catSel.value && cats.length) {
+    catSel.value = cats[0];
+  }
+  if (catSel.value !== 'new') {
+    updateSubcatDropdown(catSel.value);
+  }
+}
+
+function updateSubcatDropdown(category) {
+  const subSel = document.getElementById('bsSubcat');
+  const subs = existingSubcategories(category);
+  subSel.innerHTML = subs.map(s => `<option value="${s}">${s}</option>`).join('') + '<option value="">(none)</option>' + '<option value="new">➕ New</option>';
+  const lastSub = (LAST_SEL.category === category) ? (LAST_SEL.subcategory ?? '') : '';
+  if ([...subSel.options].some(o => o.value === lastSub)) {
+    subSel.value = lastSub;
+  }
+  updateNameDropdown(category, subSel.value || '');
+}
+
+function updateNameDropdown(category, subcategory) {
+  const nameSel = document.getElementById('bsName');
+  const names = existingNames(category, subcategory);
+  nameSel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('') + '<option value="">(none)</option>' + '<option value="new">➕ New</option>';
+  const preferName = (LAST_SEL.category === category && (LAST_SEL.subcategory||'') === (subcategory||'')) ? (LAST_SEL.name||'') : '';
+  if ([...nameSel.options].some(o => o.value === preferName)) {
+    nameSel.value = preferName;
+  }
+}
+
+/* ===== Export / Import ===== */
+function downloadBlob(filename, text, mime='application/octet-stream') {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 0);
+}
+
+function toCSV(rows) {
+  const esc = (s) => '"' + String(s ?? '').replaceAll('"','""') + '"';
+  const headers = ['Type','Category','Subcategory','Name','Amount','Month'];
+  const data = rows.map(r => [r.type, r.category, r.subcategory || '', r.name || '', r.amount, r.month]);
+  return [headers.map(esc).join(','), ...data.map(row => row.map(esc).join(','))].join('\n');
+}
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const data = { ACCOUNTS, BALANCES, TRANSACTIONS, SETTINGS, version: DATA_VERSION };
+  downloadBlob('balance_sheet_data.json', JSON.stringify(data, null, 2), 'application/json');
+});
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const month = document.getElementById('viewMonth').value;
+  const rows = TRANSACTIONS.filter(t => !month || t.month === month);
+  downloadBlob(`transactions_${month || 'all'}.csv`, toCSV(rows), 'text/csv');
+});
+
+document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+document.getElementById('importFile').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      ACCOUNTS = data.ACCOUNTS || [];
+      BALANCES = data.BALANCES || {};
+      TRANSACTIONS = data.TRANSACTIONS || [];
+      SETTINGS = data.SETTINGS || { currency: 'QAR' };
+      ACCOUNTS.forEach(a => { if (a.subcategory === undefined) a.subcategory = ''; });
+      TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) t.subcategory = ''; });
+      write(LS_ACCOUNTS, ACCOUNTS);
+      write(LS_BALANCES, BALANCES);
+      write(LS_TRANSACTIONS, TRANSACTIONS);
+      write(LS_SETTINGS, SETTINGS);
+      document.getElementById('currencySel').value = SETTINGS.currency || 'QAR';
+      refreshMonthPicker();
+      const months = Object.keys(BALANCES);
+      if (months.length) render(months[months.length - 1]);
+      alert('Data imported successfully!');
+    } catch {
+      alert('Invalid JSON file format.');
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('importCsvBtn').addEventListener('click', () => document.getElementById('importCsvFile').click());
+document.getElementById('importCsvFile').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const lines = reader.result.split('\n').map(line => line.split(',').map(cell => cell.replace(/^"|"$/g, '')));
+      const headers = lines[0];
+      if (headers.join(',') !== 'Type,Category,Subcategory,Name,Amount,Month') {
+        alert('Invalid CSV format. Expected headers: Type,Category,Subcategory,Name,Amount,Month');
+        return;
+      }
+      let successCount = 0;
+      lines.slice(1).forEach(row => {
+        const tx = {
+          type: row[0],
+          category: sanitize(row[1]),
+          subcategory: sanitize(row[2]) || '',
+          name: sanitize(row[3]) || '',
+          amount: parseFloat(row[4]),
+          month: row[5]
+        };
+        if (tx.type && ['Asset', 'Liability'].includes(tx.type) && tx.category && !isNaN(tx.amount) && tx.month.match(/^\d{4}-\d{2}$/)) {
+          if (addBSLine(tx)) successCount++;
+        }
+      });
+      refreshMonthPicker();
+      render(document.getElementById('viewMonth').value);
+      alert(`Imported ${successCount} transactions successfully!`);
+    } catch {
+      alert('Error reading CSV file.');
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('This will clear ALL data. A JSON backup will be downloaded first. Continue?')) return;
+  const backup = { ACCOUNTS, BALANCES, TRANSACTIONS, SETTINGS, version: DATA_VERSION };
+  downloadBlob('backup_before_reset.json', JSON.stringify(backup, null, 2), 'application/json');
+  ACCOUNTS = []; BALANCES = {}; TRANSACTIONS = [];
+  write(LS_ACCOUNTS, ACCOUNTS); write(LS_BALANCES, BALANCES); write(LS_TRANSACTIONS, TRANSACTIONS);
+  setLastSel({ type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
+  refreshMonthPicker();
+  updateCategoryDropdown();
+  const m = new Date().toISOString().slice(0,7);
+  render(m);
+});
+
+/* ===== Form events ===== */
+const catSelEl = document.getElementById('bsCategory');
+catSelEl.addEventListener('change', (e) => {
+  const val = e.target.value;
+  if (val === 'new') {
+    document.getElementById('newCategory').classList.remove('hidden');
+    document.getElementById('bsSubcat').innerHTML = '<option value="">(none)</option><option value="new">➕ New</option>';
+    document.getElementById('newSubcat').classList.remove('hidden');
+    document.getElementById('bsName').innerHTML = '<option value="">(none)</option><option value="new">➕ New</option>';
+    document.getElementById('newName').classList.remove('hidden');
+    setLastSel({ category: '' });
+  } else {
+    document.getElementById('newCategory').classList.add('hidden');
+    updateSubcatDropdown(val);
+    document.getElementById('newSubcat').classList.add('hidden');
+    document.getElementById('newName').classList.add('hidden');
+    setLastSel({ category: val });
+  }
+});
+
+document.getElementById('bsSubcat').addEventListener('change', (e) => {
+  const category = document.getElementById('bsCategory').value;
+  if (e.target.value === 'new') {
+    document.getElementById('newSubcat').classList.remove('hidden');
+    document.getElementById('bsName').innerHTML = '<option value="">(none)</option><option value="new">➕ New</option>';
+    document.getElementById('newName').classList.add('hidden');
+    setLastSel({ subcategory: '' });
+  } else {
+    document.getElementById('newSubcat').classList.add('hidden');
+    updateNameDropdown(category, e.target.value || '');
+    setLastSel({ subcategory: e.target.value || '' });
+  }
+});
+
+document.getElementById('bsName').addEventListener('change', (e) => {
+  if (e.target.value === 'new') {
+    document.getElementById('newName').classList.remove('hidden');
+    setLastSel({ name: '' });
+  } else {
+    document.getElementById('newName').classList.add('hidden');
+    setLastSel({ name: e.target.value || '' });
+  }
+});
+
+document.getElementById('bsForm').addEventListener('submit', e => {
+  e.preventDefault();
+  let type = document.getElementById('bsType').value;
+  let category = document.getElementById('bsCategory').value;
+  let subcategory = document.getElementById('bsSubcat').value;
+  let name = document.getElementById('bsName').value;
+  if (category === 'new') category = sanitize(document.getElementById('newCategory').value);
+  if (subcategory === 'new') subcategory = sanitize(document.getElementById('newSubcat').value);
+  if (name === 'new') name = sanitize(document.getElementById('newName').value);
+  const amount = parseFloat(document.getElementById('bsAmount').value);
+  const month = document.getElementById('bsMonth').value;
+  if (!category || !(amount > 0) || !month) return alert('Please fill all required fields.');
+
+  if (editId) {
+    const oldTx = TRANSACTIONS.find(t => t.id === editId);
+    if (oldTx) reverseTransaction(oldTx);
+  }
+
+  if (addBSLine({ id: editId, type, category, subcategory, name, amount, month })) {
+    editId = null;
+    refreshMonthPicker(month);
+    render(month);
+    document.getElementById('bsAmount').value = '';
+    document.getElementById('newCategory').classList.add('hidden');
+    document.getElementById('newSubcat').classList.add('hidden');
+    document.getElementById('newName').classList.add('hidden');
+  }
+});
+
+/* ===== Settings ===== */
+document.getElementById('currencySel').addEventListener('change', (e) => {
+  SETTINGS.currency = e.target.value;
+  write(LS_SETTINGS, SETTINGS);
+  const m = document.getElementById('viewMonth').value;
+  render(m);
+});
+
+const typeSel = document.getElementById('bsType');
+const monthInp = document.getElementById('bsMonth');
+typeSel.addEventListener('change', (e) => setLastSel({ type: e.target.value }));
+monthInp.addEventListener('change', (e) => setLastSel({ month: e.target.value }));
+
+/* ===== Month change & copy last month ===== */
+document.getElementById('viewMonth').addEventListener('change', e => render(e.target.value));
+
+document.getElementById('addCurrentMonthBtn').addEventListener('click', () => {
+  const m = new Date().toISOString().slice(0,7);
+  if (!BALANCES[m]) BALANCES[m] = {};
+  write(LS_BALANCES, BALANCES);
+  refreshMonthPicker(m);
+  render(m);
+});
+
+document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
+  const months = Array.from(new Set(Object.keys(BALANCES).concat([new Date().toISOString().slice(0,7)]))).sort();
+  if (!months.length) return alert("No previous month to copy.");
+  const current = document.getElementById('viewMonth').value || months[months.length - 1];
+  const idx = months.indexOf(current) - 1;
+  if (idx < 0) return alert("No previous month data.");
+  const prev = months[idx];
+
+  TRANSACTIONS.filter(t => t.month === prev).forEach(t => {
+    addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current });
+  });
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  render(current);
+  alert("Copied last month's data!");
+});
+
+document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
+  const month = document.getElementById('viewMonth').value;
+  if (!month) return;
+  if (confirm(`Delete ALL transactions for ${month}? This cannot be undone!`)) {
+    deleteAllForMonth(month);
+  }
+});
+
+/* ===== Manage Categories modal ===== */
+const manageBtn = document.getElementById('manageCategoriesBtn');
+const modal = document.getElementById('categoryModal');
+const closeModalBtn = document.getElementById('closeModalBtn');
+const saveChangesBtn = document.getElementById('saveCategoryChangesBtn');
+const categoryListDiv = document.getElementById('categoryList');
+
+manageBtn.addEventListener('click', () => {
+  hydrateAccountsFromTransactions();
+  renderCategoryManager();
+  modal.style.display = 'block';
+});
+
+closeModalBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+window.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+modal.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') modal.style.display = 'none';
+});
+
+function hydrateAccountsFromTransactions() {
+  let touched = false;
+  TRANSACTIONS.forEach(t => {
+    const type = t.type;
+    const category = t.category;
+    const sub = (t.subcategory || '');
+    const nm = (t.name || '');
+    const exists = ACCOUNTS.some(a => a.type === type && a.category === category && (a.subcategory||'') === sub && (a.name||'') === nm);
+    if (!exists) {
+      ACCOUNTS.push({ id: uuid(), type, category, subcategory: sub, name: nm });
+      touched = true;
+    }
+  });
+  if (touched) write(LS_ACCOUNTS, ACCOUNTS);
+}
+
+function renderCategoryManager() {
+  categoryListDiv.innerHTML = '';
+  const grouped = {};
+  ACCOUNTS.filter(a => a.category && a.category !== 'Offset').forEach(acc => {
+    const cat = (acc.category || '').trim();
+    const sub = (acc.subcategory || '').trim();
+    if (!grouped[cat]) grouped[cat] = {};
+    if (!grouped[cat][sub]) grouped[cat][sub] = [];
+    if (!grouped[cat][sub].some(x => (x.name||'') === (acc.name||''))) {
+      grouped[cat][sub].push(acc);
+    }
+  });
+
+  Object.keys(grouped).sort().forEach(cat => {
+    const hasAny = Object.values(grouped[cat]).some(list => list.length > 0);
+    if (!hasAny) return;
+
+    const catBox = document.createElement('div');
+    catBox.className = 'border rounded p-3';
+
+    const catHeader = document.createElement('div');
+    catHeader.className = 'flex justify-between items-center mb-2';
+    const catInput = document.createElement('input');
+    catInput.type = 'text';
+    catInput.className = 'border p-2 rounded w-full';
+    catInput.value = cat;
+    catInput.dataset.cat = cat;
+    catInput.setAttribute('aria-label', `Rename category ${cat}`);
+    const catDeleteBtn = document.createElement('button');
+    catDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
+    catDeleteBtn.textContent = 'Delete';
+    catDeleteBtn.setAttribute('aria-label', `Delete category ${cat}`);
+    catDeleteBtn.addEventListener('click', () => {
+      if (deleteCategory(cat)) {
+        renderCategoryManager();
+        alert(`Category "${cat}" deleted.`);
+      }
+    });
+    catHeader.appendChild(catInput);
+    catHeader.appendChild(catDeleteBtn);
+    catBox.appendChild(catHeader);
+
+    const subKeys = Array.from(new Set(Object.keys(grouped[cat]).concat(['']))).sort((a,b) => a.localeCompare(b));
+
+    subKeys.forEach(sub => {
+      const list = grouped[cat][sub] || [];
+
+      const subBox = document.createElement('div');
+      subBox.className = 'ml-4';
+      const subHeader = document.createElement('div');
+      subHeader.className = 'flex justify-between items-center mt-2';
+      const subLabel = document.createElement('div');
+      subLabel.className = 'text-sm text-gray-600';
+      subLabel.textContent = 'Subcategory:';
+      const subInput = document.createElement('input');
+      subInput.type = 'text';
+      subInput.className = 'border p-2 rounded w-full';
+      subInput.value = sub;
+      subInput.placeholder = '(none)';
+      subInput.dataset.cat = cat;
+      subInput.dataset.sub = sub;
+      subInput.setAttribute('aria-label', `Rename subcategory ${sub || 'none'} in ${cat}`);
+      const subDeleteBtn = document.createElement('button');
+      subDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
+      subDeleteBtn.textContent = 'Delete';
+      subDeleteBtn.setAttribute('aria-label', `Delete subcategory ${sub || 'none'} in ${cat}`);
+      subDeleteBtn.addEventListener('click', () => {
+        if (deleteCategory(cat, sub)) {
+          renderCategoryManager();
+          alert(`Subcategory "${sub || 'none'}" in "${cat}" deleted.`);
+        }
+      });
+      subHeader.appendChild(subLabel);
+      subHeader.appendChild(subInput);
+      subHeader.appendChild(subDeleteBtn);
+      subBox.appendChild(subHeader);
+
+      if (list.length === 0) {
+        const hint = document.createElement('div');
+        hint.className = 'text-xs text-gray-400 ml-4 mb-2';
+        hint.textContent = 'No names yet — add via form or create here after saving.';
+        subBox.appendChild(hint);
+      } else {
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(acc => {
+          const nameBox = document.createElement('div');
+          nameBox.className = 'flex justify-between items-center ml-4 mb-1';
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text';
+          nameInput.className = 'border p-2 rounded w-full';
+          nameInput.value = acc.name || '';
+          nameInput.dataset.accId = acc.id;
+          nameInput.setAttribute('aria-label', `Rename name ${acc.name || 'none'} in ${cat} ${sub || 'none'}`);
+          const nameDeleteBtn = document.createElement('button');
+          nameDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
+          nameDeleteBtn.textContent = 'Delete';
+          nameDeleteBtn.setAttribute('aria-label', `Delete name ${acc.name || 'none'} in ${cat} ${sub || 'none'}`);
+          nameDeleteBtn.addEventListener('click', () => {
+            if (deleteCategory(cat, sub, acc.name)) {
+              renderCategoryManager();
+              alert(`Name "${acc.name || 'none'}" in "${cat} ${sub || 'none'}" deleted.`);
+            }
+          });
+          nameBox.appendChild(nameInput);
+          nameBox.appendChild(nameDeleteBtn);
+          subBox.appendChild(nameBox);
+        });
+      }
+      catBox.appendChild(subBox);
+    });
+
+    categoryListDiv.appendChild(catBox);
+  });
+
+  if (!categoryListDiv.children.length) {
+    categoryListDiv.innerHTML = '<div class="text-sm text-gray-500">No categories yet. Add entries first.</div>';
+  }
+}
+
+saveChangesBtn.addEventListener('click', () => {
+  const catInputs = categoryListDiv.querySelectorAll('input[data-cat]:not([data-sub])');
+  catInputs.forEach(catInput => {
+    const oldCat = catInput.dataset.cat;
+    const newCat = sanitize(catInput.value);
+    if (!newCat || newCat === oldCat) return;
+    if (!newCat.match(/^[a-zA-Z0-9 ]+$/)) {
+      alert(`Invalid category name: "${newCat}". Use letters, numbers, or spaces.`);
+      return;
+    }
+    ACCOUNTS.filter(a => a.category === oldCat).forEach(a => a.category = newCat);
+    TRANSACTIONS.filter(t => t.category === oldCat).forEach(t => t.category = newCat);
+  });
+
+  const subInputs = categoryListDiv.querySelectorAll('input[data-sub]');
+  subInputs.forEach(subInput => {
+    const cat = subInput.dataset.cat;
+    const oldSub = subInput.dataset.sub;
+    const newSub = sanitize(subInput.value);
+    if (newSub === oldSub) return;
+    if (newSub && !newSub.match(/^[a-zA-Z0-9 ]+$/)) {
+      alert(`Invalid subcategory name: "${newSub}". Use letters, numbers, or spaces.`);
+      return;
+    }
+    ACCOUNTS.filter(a => a.category === cat && (a.subcategory||'') === oldSub).forEach(a => a.subcategory = newSub);
+    TRANSACTIONS.filter(t => t.category === cat && (t.subcategory||'') === oldSub).forEach(t => t.subcategory = newSub);
+  });
+
+  const nameInputs = categoryListDiv.querySelectorAll('input[data-acc-id]');
+  nameInputs.forEach(inp => {
+    const id = inp.dataset.accId;
+    const newName = sanitize(inp.value);
+    const acc = ACCOUNTS.find(a => a.id === id);
+    if (!acc || newName === acc.name) return;
+    if (newName && !newName.match(/^[a-zA-Z0-9 ]+$/)) {
+      alert(`Invalid name: "${newName}". Use letters, numbers, or spaces.`);
+      return;
+    }
+    acc.name = newName;
+    TRANSACTIONS.filter(t => t.mainId === id).forEach(t => { t.name = newName; });
+  });
+
+  write(LS_ACCOUNTS, ACCOUNTS);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  modal.style.display = 'none';
+  const currentMonth = document.getElementById('viewMonth').value || allMonths().pop() || '';
+  refreshMonthPicker(currentMonth);
+  if (currentMonth) render(currentMonth);
+  alert('Categories updated successfully');
+});
+
+/* ===== Init ===== */
+(function init() {
+  const today = new Date();
+  const yM = today.toISOString().slice(0, 7);
+  document.getElementById('bsMonth').value = LAST_SEL.month || yM;
+  document.getElementById('bsType').value = LAST_SEL.type || 'Asset';
+  document.getElementById('currencySel').value = SETTINGS.currency || 'QAR';
+
+  refreshMonthPicker();
+  const months = Object.keys(BALANCES);
+  if (months.length) {
+    const last = months[months.length - 1];
+    document.getElementById('viewMonth').value = last;
+    render(last);
+  } else {
+    updateCategoryDropdown();
+    render(yM);
+  }
+})();
+</script>
+
+</body>
+</html>
