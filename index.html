@@ -69,7 +69,7 @@
         <select id="bsName" class="border rounded p-3 w-full" aria-label="Name or sub-account"></select>
         <input id="newName" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Sub-Account / Name (optional)" aria-label="New name or sub-account" />
       </div>
-      <input id="bsAmount" type="number" inputmode="decimal" step="0.01" min="0" class="border rounded p-3 w-full" placeholder="Amount" required aria-label="Amount" />
+      <input id="bsAmount" type="number" inputmode="decimal" step="0.01" class="border rounded p-3 w-full" placeholder="Amount" required aria-label="Amount" />
       <input id="bsMonth" type="month" class="border rounded p-3 w-full" required aria-label="Month" />
       <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded w-full sm:w-auto" type="submit" aria-label="Save entry">Save</button>
     </form>
@@ -116,6 +116,7 @@
           <th class="border p-2">Subcategory</th>
           <th class="border p-2">Name</th>
           <th class="border p-2">Amount</th>
+		  <th class="border p-2">Note</th>
           <th class="border p-2">Actions</th>
         </tr>
       </thead>
@@ -236,7 +237,7 @@ function rebuildBalances() {
   write(LS_BALANCES, BALANCES);
 }
 
-function addBSLine({ id, type, category, subcategory, name, amount, month }) {
+function addBSLine({ id, type, category, subcategory, name, amount, month, note }) {
   const fallbackName = sanitize(name) || '';
   if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) {
     alert('Category must be non-empty and contain only letters, numbers, or spaces.');
@@ -250,9 +251,12 @@ function addBSLine({ id, type, category, subcategory, name, amount, month }) {
     alert('Name must contain only letters, numbers, spaces, or slashes.');
     return false;
   }
-  if (amount <= 0) {
-    alert('Amount must be greater than zero.');
+  if (isNaN(amount)) {
+    alert('Amount must be a valid number.');
     return false;
+  }
+  if (amount === 0) {
+    if (!confirm('Amount is zero. Do you want to continue?')) return false;
   }
   const main = getOrCreateAccount(type, category, subcategory || '', fallbackName);
   const offset = getOrCreateAccount(type === 'Asset' ? 'Liability' : 'Asset', 'Offset', '', 'AutoOffset');
@@ -261,7 +265,7 @@ function addBSLine({ id, type, category, subcategory, name, amount, month }) {
   post(main.id, month, sign * amount);
   post(offset.id, month, -sign * amount);
 
-  const newTx = { id: id || uuid(), type, category, subcategory: subcategory || '', name: fallbackName, amount, month, mainId: main.id, offsetId: offset.id };
+  const newTx = { id: id || uuid(), type, category, subcategory: subcategory || '', name: fallbackName, amount, month, mainId: main.id, offsetId: offset.id, note: note || "" };
   if (id) {
     const idx = TRANSACTIONS.findIndex(t => t.id === id);
     TRANSACTIONS[idx] = newTx;
@@ -445,17 +449,18 @@ function renderTransactions(month) {
   tbody.innerHTML = '';
   TRANSACTIONS.filter(t => t.month === month).forEach(tx => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="border p-2">${tx.type}</td>
-      <td class="border p-2">${tx.category}</td>
-      <td class="border p-2">${tx.subcategory || '-'}</td>
-      <td class="border p-2">${tx.name || '-'}</td>
-      <td class="border p-2">${formatMoney(tx.amount)}</td>
-      <td class="border p-2 space-x-2">
-        <button class="bg-blue-500 text-white px-2 py-1 rounded" onclick="startEdit('${tx.id}')" aria-label="Edit transaction ${tx.id}">Edit</button>
-        <button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteTransaction('${tx.id}')" aria-label="Delete transaction ${tx.id}">Delete</button>
-      </td>
-    `;
+   tr.innerHTML = `
+  <td class="border p-2">${tx.type}</td>
+  <td class="border p-2">${tx.category}</td>
+  <td class="border p-2">${tx.subcategory || '-'}</td>
+  <td class="border p-2">${tx.name || '-'}</td>
+  <td class="border p-2">${formatMoney(tx.amount)}</td>
+  <td class="border p-2">${tx.note ? tx.note : ''}</td>
+  <td class="border p-2 space-x-2">
+    <button class="bg-blue-500 text-white px-2 py-1 rounded" onclick="startEdit('${tx.id}')" aria-label="Edit transaction ${tx.id}">Edit</button>
+    <button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteTransaction('${tx.id}')" aria-label="Delete transaction ${tx.id}">Delete</button>
+  </td>
+`;
     tbody.appendChild(tr);
   });
 }
@@ -758,7 +763,8 @@ document.getElementById('bsForm').addEventListener('submit', e => {
   if (name === 'new') name = sanitize(document.getElementById('newName').value);
   const amount = parseFloat(document.getElementById('bsAmount').value);
   const month = document.getElementById('bsMonth').value;
-  if (!category || !(amount > 0) || !month) return alert('Please fill all required fields.');
+  if (!category || isNaN(amount) || amount === 0 || !month) return alert('Please fill all required fields. Amount cannot be zero.');
+
 
   if (editId) {
     const oldTx = TRANSACTIONS.find(t => t.id === editId);
@@ -809,8 +815,8 @@ document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
   if (idx < 0) return alert("No previous month data.");
   const prev = months[idx];
   TRANSACTIONS.filter(t => t.month === prev).forEach(t => {
-    addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current });
-  });
+  addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current, note: "Carried Forward" });
+});
   write(LS_BALANCES, BALANCES);
   write(LS_TRANSACTIONS, TRANSACTIONS);
   render(current);
@@ -823,6 +829,48 @@ document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
     deleteAllForMonth(month);
   }
 });
+
+function addBSLine({ id, type, category, subcategory, name, amount, month, note }) {
+  const fallbackName = sanitize(name) || '';
+  if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) {
+    alert('Category must be non-empty and contain only letters, numbers, or spaces.');
+    return false;
+  }
+  if (subcategory && !subcategory.match(/^[a-zA-Z0-9 ]+$/)) {
+    alert('Subcategory must contain only letters, numbers, or spaces.');
+    return false;
+  }
+  if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) {
+    alert('Name must contain only letters, numbers, spaces, or slashes.');
+    return false;
+  }
+  if (isNaN(amount)) {
+    alert('Amount must be a valid number.');
+    return false;
+  }
+  // NO validation blocking negatives!
+
+  const main = getOrCreateAccount(type, category, subcategory || '', fallbackName);
+  const offset = getOrCreateAccount(type === 'Asset' ? 'Liability' : 'Asset', 'Offset', '', 'AutoOffset');
+  const sign = type === 'Asset' ? 1 : -1;
+
+  post(main.id, month, sign * amount);
+  post(offset.id, month, -sign * amount);
+
+  const newTx = { id: id || uuid(), type, category, subcategory: subcategory || '', name: fallbackName, amount, month, mainId: main.id, offsetId: offset.id, note: note || "" };
+
+  if (id) {
+    const idx = TRANSACTIONS.findIndex(t => t.id === id);
+    TRANSACTIONS[idx] = newTx;
+  } else {
+    TRANSACTIONS.push(newTx);
+  }
+
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
+  return true;
+}
+
 
 // --- Manage Categories modal --- //
 const manageBtn = document.getElementById('manageCategoriesBtn');
