@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Balance Sheet Module</title>
 <script src="https://cdn.tailwindcss.com"></script>
+
+
+
 <style>
   :root { padding-bottom: constant(safe-area-inset-bottom, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
   .collapsible { cursor: pointer; touch-action: manipulation; }
@@ -70,6 +73,7 @@
         <input id="newName" type="text" class="border rounded p-3 w-full mt-1 hidden" placeholder="New Sub-Account / Name (optional)" aria-label="New name or sub-account" />
       </div>
       <input id="bsAmount" type="number" inputmode="decimal" step="0.01" class="border rounded p-3 w-full" placeholder="Amount" required aria-label="Amount" />
+	  <input id="bsNote" type="text" class="border rounded p-3 w-full" placeholder="Note (optional)" aria-label="Note" />
       <input id="bsMonth" type="month" class="border rounded p-3 w-full" required aria-label="Month" />
       <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded w-full sm:w-auto" type="submit" aria-label="Save entry">Save</button>
     </form>
@@ -116,7 +120,7 @@
           <th class="border p-2">Subcategory</th>
           <th class="border p-2">Name</th>
           <th class="border p-2">Amount</th>
-          <th class="border p-2">Note</th>
+		  <th class="border p-2">Note</th>
           <th class="border p-2">Actions</th>
         </tr>
       </thead>
@@ -140,205 +144,157 @@
 
 <script>
 // --- GOOGLE SHEETS SETTINGS --- //
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwoigjDgliemvn-mSxjVrdBh2wD83tzbxMoYfuN2iy__rfncLsANysNy0HXZn7nkPRf/exec";
+const GOOGLE_SCRIPT_URL = "	";
 
 // --- Storage keys & helpers --- //
 const DATA_VERSION = '1.3';
-const KEYS = {
-  ACCOUNTS: 'bs_accounts_v1',
-  BALANCES: 'bs_balances_v1',
-  TRANSACTIONS: 'bs_transactions_v1',
-  SETTINGS: 'bs_settings_v1',
-  LASTSEL: 'bs_last_selection_v1'
-};
+const LS_ACCOUNTS = 'bs_accounts_v1';
+const LS_BALANCES = 'bs_balances_v1';
+const LS_TRANSACTIONS = 'bs_transactions_v1';
+const LS_SETTINGS = 'bs_settings_v1';
+const LS_LASTSEL = 'bs_last_selection_v1';
 
 const uuid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const read = (k, fb) => {
+  try {
+    const data = JSON.parse(localStorage.getItem(k));
+    return data ?? fb;
+  } catch (e) {
+    console.error(`Failed to read ${k}:`, e);
+    alert(`Error loading data for ${k}. Resetting to default.`);
+    return fb;
+  }
+};
+const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const sanitize = (s) => (s || '').trim().replace(/\s+/g, ' ');
 
 // --- Google Sheets Integration --- //
-async function readFromSheets(key, fallback, retries = 3) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=read&key=${key}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (data.success) {
-        console.log(`Read ${key}:`, data.data);
-        return data.data !== null ? data.data : fallback;
-      }
-      console.warn(`Attempt ${attempt}: Failed to read ${key}, server error: ${data.error}`);
-      if (attempt === retries) {
-        console.error(`All attempts failed for ${key}. Response:`, data);
-        alert(`Error loading data for ${key}: ${data.error || 'Unknown server error'}. Using default.`);
-        return fallback;
-      }
-    } catch (e) {
-      console.warn(`Attempt ${attempt}: Network error reading ${key}:`, e);
-      if (attempt === retries) {
-        console.error(`All attempts failed for ${key}:`, e);
-        alert(`Error loading data for ${key}: ${e.message}. Check network or Google Sheets setup.`);
-        return fallback;
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-}
-
-async function writeToSheets(key, value) {
-  try {
-    const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=write&key=${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value)
-    });
-    const result = await response.json();
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to write data');
-    }
-    console.log(`Wrote ${key} successfully`);
-  } catch (e) {
-    console.error(`Failed to write ${key}:`, e);
-    alert(`Error saving data for ${key}: ${e.message}`);
-  }
-}
-
 async function saveToGoogleSheets(entry) {
   try {
-    const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=saveTransaction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(GOOGLE_SCRIPT_URL, {
+      method: "POST",
       body: JSON.stringify(entry)
     });
-    const result = await response.json();
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to save transaction');
-    }
-    console.log('Transaction saved successfully');
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,200)}`);
+    const payload = JSON.parse(text);
+    if (payload.status !== "added") throw new Error(text.slice(0,200));
+    return payload;
   } catch (err) {
-    console.error('Failed to save to Google Sheets:', err);
-    alert('Error saving transaction to Google Sheets: ' + err.message);
+    console.error("Google Sheets Save Failed:", err);
+    return null; // don’t block local save
   }
 }
 
-async function deleteTransactionFromSheets(id) {
+
+async function loadAllFromGoogleSheets() {
   try {
-    const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=deleteTransaction&id=${id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const result = await response.json();
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to delete transaction');
-    }
-    console.log('Transaction deleted successfully');
-  } catch (err) {
-    console.error('Failed to delete transaction from Google Sheets:', err);
-    alert('Error deleting transaction from Google Sheets: ' + err.message);
+    const res = await fetch(GOOGLE_SCRIPT_URL + "?action=getAll&t=" + Date.now());
+    const text = await res.text();
+    const payload = JSON.parse(text);
+    return Array.isArray(payload.data) ? payload.data : [];
+  } catch {
+    return null;
   }
 }
 
 // --- App state --- //
-let ACCOUNTS = [];
-let BALANCES = {};
-let TRANSACTIONS = [];
-let SETTINGS = { currency: 'QAR' };
-let LAST_SEL = { type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) };
+let ACCOUNTS = read(LS_ACCOUNTS, []);
+let BALANCES = read(LS_BALANCES, {});
+let TRANSACTIONS = read(LS_TRANSACTIONS, []);
+let SETTINGS = read(LS_SETTINGS, { currency: 'QAR' });
 let editId = null;
+let LAST_SEL = read(LS_LASTSEL, { type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
+const setLastSel = (partial) => { LAST_SEL = { ...LAST_SEL, ...partial }; write(LS_LASTSEL, LAST_SEL); };
 
-async function initState() {
-  try {
-    ACCOUNTS = await readFromSheets(KEYS.ACCOUNTS, []);
-    BALANCES = await readFromSheets(KEYS.BALANCES, {});
-    TRANSACTIONS = await readFromSheets(KEYS.TRANSACTIONS, []);
-    SETTINGS = await readFromSheets(KEYS.SETTINGS, { currency: 'QAR' });
-    LAST_SEL = await readFromSheets(KEYS.LASTSEL, { type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
-    console.log('Initialized state:', { ACCOUNTS, BALANCES, TRANSACTIONS, SETTINGS, LAST_SEL });
-  } catch (e) {
-    console.error('Failed to initialize state:', e);
-    alert('Error initializing app state: ' + e.message);
-  }
-}
-
-// --- Migration --- //
-(async function migrate() {
+// --- Migration (ensure subcategory fields exist) --- //
+(function migrate(){
   let touched = false;
-  ACCOUNTS.forEach(a => { if (a.subcategory === undefined) { a.subcategory = ''; touched = true; } });
-  TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) { t.subcategory = ''; touched = true; } });
+  ACCOUNTS.forEach(a => { if (a.subcategory === undefined) { a.subcategory = ''; touched = true; }});
+  TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) { t.subcategory = ''; touched = true; }});
   if (touched) {
-    await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-    await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
+    write(LS_ACCOUNTS, ACCOUNTS);
+    write(LS_TRANSACTIONS, TRANSACTIONS);
   }
   document.getElementById('dataVersion').textContent = DATA_VERSION;
 })();
 
 // --- Accounts & posting --- //
-async function getOrCreateAccount(type, category, subcategory, name) {
+function getOrCreateAccount(type, category, subcategory, name) {
   const sub = sanitize(subcategory) || '';
   const nm = sanitize(name) || '';
-  let acc = ACCOUNTS.find(a => a.type === type && a.category === category && (a.subcategory||'') === sub && (a.name||'') === nm);
+  let acc = ACCOUNTS.find(a =>
+    a.type === type &&
+    a.category === category &&
+    (a.subcategory||'') === sub &&
+    (a.name||'') === nm
+  );
   if (!acc) {
     acc = { id: uuid(), type, category, subcategory: sub, name: nm };
     ACCOUNTS.push(acc);
-    await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
+    write(LS_ACCOUNTS, ACCOUNTS);
   }
   return acc;
 }
 
-async function post(accountId, month, signedAmount) {
+function post(accountId, month, signedAmount) {
   if (!BALANCES[month]) BALANCES[month] = {};
   if (!BALANCES[month][accountId]) BALANCES[month][accountId] = 0;
   BALANCES[month][accountId] = round2(BALANCES[month][accountId] + signedAmount);
-  await writeToSheets(KEYS.BALANCES, BALANCES);
 }
 
-async function reverseTransaction(tx) {
+function reverseTransaction(tx) {
   const sign = tx.type === 'Asset' ? 1 : -1;
-  await post(tx.mainId, tx.month, -sign * tx.amount);
-  await post(tx.offsetId, tx.month, sign * tx.amount);
+  post(tx.mainId, tx.month, -sign * tx.amount);
+  post(tx.offsetId, tx.month, sign * tx.amount);
 }
 
-async function rebuildBalances() {
+function rebuildBalances() {
   BALANCES = {};
-  for (const t of TRANSACTIONS) {
+  TRANSACTIONS.forEach(t => {
     const sign = t.type === 'Asset' ? 1 : -1;
-    await post(t.mainId, t.month, sign * t.amount);
-    await post(t.offsetId, t.month, -sign * t.amount);
-  }
-  await writeToSheets(KEYS.BALANCES, BALANCES);
+    post(t.mainId, t.month, sign * t.amount);
+    post(t.offsetId, t.month, -sign * t.amount);
+  });
+  write(LS_BALANCES, BALANCES);
 }
 
-async function addBSLine({ id, type, category, subcategory, name, amount, month, note }) {
+function hydrateAccountsFromTransactions() {
+  let touched = false;
+  TRANSACTIONS.forEach(t => {
+    const exists = ACCOUNTS.some(a =>
+      a.type === t.type &&
+      a.category === t.category &&
+      (a.subcategory||'') === (t.subcategory||'') &&
+      (a.name||'') === (t.name||'')
+    );
+    if (!exists) {
+      ACCOUNTS.push({ id: uuid(), type: t.type, category: t.category, subcategory: t.subcategory || '', name: t.name || '' });
+      touched = true;
+    }
+  });
+  if (touched) write(LS_ACCOUNTS, ACCOUNTS);
+}
+
+// Single, authoritative addBSLine
+function addBSLine({ id, type, category, subcategory, name, amount, month, note }) {
   const fallbackName = sanitize(name) || '';
-  if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) {
-    alert('Category must be non-empty and contain only letters, numbers, or spaces.');
-    return false;
-  }
-  if (subcategory && !subcategory.match(/^[a-zA-Z0-9 ]+$/)) {
-    alert('Subcategory must contain only letters, numbers, or spaces.');
-    return false;
-  }
-  if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) {
-    alert('Name must contain only letters, numbers, spaces, or slashes.');
-    return false;
-  }
-  if (isNaN(amount)) {
-    alert('Amount must be a valid number.');
-    return false;
-  }
-  if (amount === 0) {
-    if (!confirm('Amount is zero. Do you want to continue?')) return false;
-  }
-  const main = await getOrCreateAccount(type, category, subcategory || '', fallbackName);
-  const offset = await getOrCreateAccount(type === 'Asset' ? 'Liability' : 'Asset', 'Offset', '', 'AutoOffset');
+  if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) { alert('Category must be non-empty and contain only letters, numbers, or spaces.'); return false; }
+  if (subcategory && !subcategory.match(/^[a-zA-Z0-9 ]+$/)) { alert('Subcategory must contain only letters, numbers, or spaces.'); return false; }
+  if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) { alert('Name must contain only letters, numbers, spaces, or slashes.'); return false; }
+  if (isNaN(amount)) { alert('Amount must be a valid number.'); return false; }
+  if (amount === 0) { if (!confirm('Amount is zero. Do you want to continue?')) return false; }
+
+  const main = getOrCreateAccount(type, category, subcategory || '', fallbackName);
+  const offset = getOrCreateAccount(type === 'Asset' ? 'Liability' : 'Asset', 'Offset', '', 'AutoOffset');
   const sign = type === 'Asset' ? 1 : -1;
 
-  await post(main.id, month, sign * amount);
-  await post(offset.id, month, -sign * amount);
+  post(main.id, month, sign * amount);
+  post(offset.id, month, -sign * amount);
 
   const newTx = { id: id || uuid(), type, category, subcategory: subcategory || '', name: fallbackName, amount, month, mainId: main.id, offsetId: offset.id, note: note || "" };
+
   if (id) {
     const idx = TRANSACTIONS.findIndex(t => t.id === id);
     TRANSACTIONS[idx] = newTx;
@@ -346,44 +302,40 @@ async function addBSLine({ id, type, category, subcategory, name, amount, month,
     TRANSACTIONS.push(newTx);
   }
 
-  await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
-  await saveToGoogleSheets(newTx);
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   return true;
 }
 
 // --- Delete functions --- //
-async function deleteTransaction(id) {
+function deleteTransaction(id) {
   const tx = TRANSACTIONS.find(t => t.id === id);
   if (!tx) return;
-  await reverseTransaction(tx);
+  reverseTransaction(tx);
   TRANSACTIONS = TRANSACTIONS.filter(t => t.id !== id);
-  await writeToSheets(KEYS.BALANCES, BALANCES);
-  await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
-  await deleteTransactionFromSheets(id);
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   render(tx.month);
 }
 
-async function deleteAllForMonth(month) {
+function deleteAllForMonth(month) {
   const list = TRANSACTIONS.filter(t => t.month === month);
-  for (const tx of list) {
-    await reverseTransaction(tx);
-    await deleteTransactionFromSheets(tx.id);
-  }
+  list.forEach(reverseTransaction);
   TRANSACTIONS = TRANSACTIONS.filter(t => t.month !== month);
-  await writeToSheets(KEYS.BALANCES, BALANCES);
-  await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   render(month);
 }
 
-async function deleteCategory(category, subcategory = '', name = '') {
+function deleteCategory(category, subcategory = '', name = '') {
   const sub = sanitize(subcategory) || '';
   const nm = sanitize(name) || '';
   if (TRANSACTIONS.some(t => t.category === category && (t.subcategory||'') === sub && (t.name||'') === nm)) {
     alert('Cannot delete: Category is in use.');
     return false;
   }
-  ACCOUNTS = ACCOUNTS.filter(a => a.category !== category || (a.subcategory||'') !== sub || (a.name||'') === nm);
-  await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
+  ACCOUNTS = ACCOUNTS.filter(a => a.category !== category || (a.subcategory||'') !== sub || (a.name||'') !== nm);
+  write(LS_ACCOUNTS, ACCOUNTS);
   return true;
 }
 
@@ -482,38 +434,26 @@ function renderTree(containerId, tree) {
         ul.appendChild(li);
       });
 
-      subHeader.addEventListener('click', () => {
+      const toggle = () => {
         ul.classList.toggle('hidden');
         ul.setAttribute('aria-hidden', !ul.classList.contains('hidden'));
         subHeader.setAttribute('aria-expanded', !ul.classList.contains('hidden'));
-      });
-      subHeader.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          ul.classList.toggle('hidden');
-          ul.setAttribute('aria-hidden', !ul.classList.contains('hidden'));
-          subHeader.setAttribute('aria-expanded', !ul.classList.contains('hidden'));
-        }
-      });
+      };
+      subHeader.addEventListener('click', toggle);
+      subHeader.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
 
       subWrap.appendChild(subHeader);
       subWrap.appendChild(ul);
       subContainer.appendChild(subWrap);
     });
 
-    catHeader.addEventListener('click', () => {
+    const toggleCat = () => {
       subContainer.classList.toggle('hidden');
       subContainer.setAttribute('aria-hidden', !subContainer.classList.contains('hidden'));
       catHeader.setAttribute('aria-expanded', !subContainer.classList.contains('hidden'));
-    });
-    catHeader.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        subContainer.classList.toggle('hidden');
-        subContainer.setAttribute('aria-hidden', !subContainer.classList.contains('hidden'));
-        catHeader.setAttribute('aria-expanded', !subContainer.classList.contains('hidden'));
-      }
-    });
+    };
+    catHeader.addEventListener('click', toggleCat);
+    catHeader.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCat(); } });
 
     catWrap.appendChild(catHeader);
     catWrap.appendChild(subContainer);
@@ -532,7 +472,7 @@ function renderTransactions(month) {
       <td class="border p-2">${tx.subcategory || '-'}</td>
       <td class="border p-2">${tx.name || '-'}</td>
       <td class="border p-2">${formatMoney(tx.amount)}</td>
-      <td class="border p-2">${tx.note || ''}</td>
+      <td class="border p-2">${tx.note ? tx.note : ''}</td>
       <td class="border p-2 space-x-2">
         <button class="bg-blue-500 text-white px-2 py-1 rounded" onclick="startEdit('${tx.id}')" aria-label="Edit transaction ${tx.id}">Edit</button>
         <button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteTransaction('${tx.id}')" aria-label="Delete transaction ${tx.id}">Delete</button>
@@ -542,37 +482,20 @@ function renderTransactions(month) {
   });
 }
 
-function showLoading(show) {
-  const badge = document.getElementById('integrityBadge');
-  badge.textContent = show ? 'Loading...' : 'Checking...';
-  badge.className = `badge bg-gray-200 text-gray-800`;
-}
-
-async function render(month) {
-  await withLoading(async () => {
-    const monthBadge = document.getElementById('monthBadge');
-    monthBadge.textContent = month || '—';
-    const { assets, liabilities } = totalsForMonth(month);
-    document.getElementById('bsSummary').innerHTML = `
-      <div class="text-green-700">Total Assets: ${formatMoney(assets)}</div>
-      <div class="text-red-700">Total Liabilities: ${formatMoney(liabilities)}</div>
-      <div class="text-blue-700">Net Worth: ${formatMoney(assets - liabilities)}</div>
-    `;
-    renderTree('assetsTree', groupTree(month, 'Asset'));
-    renderTree('liabilitiesTree', groupTree(month, 'Liability'));
-    renderTransactions(month);
-    updateCategoryDropdown();
-    integrityCheck(month);
-  });
-}
-
-async function withLoading(fn) {
-  showLoading(true);
-  try {
-    await fn();
-  } finally {
-    showLoading(false);
-  }
+function render(month) {
+  const monthBadge = document.getElementById('monthBadge');
+  monthBadge.textContent = month || '—';
+  const { assets, liabilities } = totalsForMonth(month);
+  document.getElementById('bsSummary').innerHTML = `
+    <div class="text-green-700">Total Assets: ${formatMoney(assets)}</div>
+    <div class="text-red-700">Total Liabilities: ${formatMoney(liabilities)}</div>
+    <div class="text-blue-700">Net Worth: ${formatMoney(assets - liabilities)}</div>
+  `;
+  renderTree('assetsTree', groupTree(month, 'Asset'));
+  renderTree('liabilitiesTree', groupTree(month, 'Liability'));
+  renderTransactions(month);
+  updateCategoryDropdown();
+  integrityCheck(month);
 }
 
 // --- Month picker --- //
@@ -620,6 +543,8 @@ function startEdit(id) {
   document.getElementById('bsName').value = tx.name || '';
   document.getElementById('bsAmount').value = tx.amount;
   document.getElementById('bsMonth').value = tx.month;
+  const noteEl = document.getElementById('bsNote');
+  if (noteEl) noteEl.value = tx.note || '';
 }
 
 // --- Dropdown helpers --- //
@@ -639,10 +564,12 @@ function existingNames(category, subcategory) {
     .map(a => a.name))].sort();
 }
 
-async function ensureCategoryExists(cat) {
+function ensureCategoryExists(cat) {
   if (!cat || cat === 'Offset') return;
   if (!existingCategories().includes(cat)) {
-    await getOrCreateAccount('Asset', cat, '', '');
+    // default to Asset when seeding; actual type will be taken from the posting
+    getOrCreateAccount('Asset', cat, '', '');
+    write(LS_ACCOUNTS, ACCOUNTS);
   }
 }
 
@@ -650,10 +577,11 @@ function updateCategoryDropdown() {
   const catSel = document.getElementById('bsCategory');
   const categories = existingCategories();
   if (!categories.length) {
-    ['Cash','Receivables','Investments','Payables','Accruals','Equity'].forEach(async c => {
+    ['Cash','Receivables','Investments','Payables','Accruals','Equity'].forEach(c => {
       const t = ['Cash','Receivables','Investments'].includes(c) ? 'Asset' : 'Liability';
-      await getOrCreateAccount(t, c, '', '');
+      getOrCreateAccount(t, c, '', '');
     });
+    write(LS_ACCOUNTS, ACCOUNTS);
   }
   const cats = existingCategories();
   catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('') + '<option value="new">➕ New</option>';
@@ -704,58 +632,28 @@ function downloadBlob(filename, text, mime='application/octet-stream') {
 
 function toCSV(rows) {
   const esc = (s) => '"' + String(s ?? '').replaceAll('"','""') + '"';
-  const headers = ['Type','Category','Subcategory','Name','Amount','Month'];
-  const data = rows.map(r => [r.type, r.category, r.subcategory || '', r.name || '', r.amount, r.month]);
+  const headers = ['Type','Category','Subcategory','Name','Amount','Month','Note'];
+  const data = rows.map(r => [r.type, r.category, r.subcategory || '', r.name || '', r.amount, r.month, r.note || '']);
   return [headers.map(esc).join(','), ...data.map(row => row.map(esc).join(','))].join('\n');
 }
 
-document.getElementById('exportBtn').addEventListener('click', async () => {
+document.getElementById('exportBtn').addEventListener('click', () => {
   const data = { ACCOUNTS, BALANCES, TRANSACTIONS, SETTINGS, version: DATA_VERSION };
-  const saveToSheets = confirm('Save backup to Google Sheets as well?');
-  if (saveToSheets) {
-    await writeToSheets('backup_' + Date.now(), data);
-    alert('Backup saved to Google Sheets!');
-  }
   downloadBlob('balance_sheet_data.json', JSON.stringify(data, null, 2), 'application/json');
 });
 
-document.getElementById('importBtn').addEventListener('click', async () => {
-  const fromSheets = confirm('Import from Google Sheets instead of a file?');
-  if (fromSheets) {
-    const backupKey = prompt('Enter backup key (e.g., backup_1234567890):');
-    if (backupKey) {
-      try {
-        const data = await readFromSheets(backupKey, null);
-        if (!data) throw new Error('No backup found');
-        ACCOUNTS = data.ACCOUNTS || [];
-        BALANCES = data.BALANCES || {};
-        TRANSACTIONS = data.TRANSACTIONS || [];
-        SETTINGS = data.SETTINGS || { currency: 'QAR' };
-        ACCOUNTS.forEach(a => { if (a.subcategory === undefined) a.subcategory = ''; });
-        TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) t.subcategory = ''; });
-        await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-        await writeToSheets(KEYS.BALANCES, BALANCES);
-        await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
-        await writeToSheets(KEYS.SETTINGS, SETTINGS);
-        document.getElementById('currencySel').value = SETTINGS.currency || 'QAR';
-        refreshMonthPicker();
-        const months = Object.keys(BALANCES);
-        if (months.length) render(months[months.length - 1]);
-        alert('Data imported from Google Sheets successfully!');
-      } catch {
-        alert('Failed to import from Google Sheets.');
-      }
-    }
-  } else {
-    document.getElementById('importFile').click();
-  }
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const month = document.getElementById('viewMonth').value;
+  const rows = TRANSACTIONS.filter(t => !month || t.month === month);
+  downloadBlob(`transactions_${month || 'all'}.csv`, toCSV(rows), 'text/csv');
 });
 
-document.getElementById('importFile').addEventListener('change', async (e) => {
+document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+document.getElementById('importFile').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = async () => {
+  reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
       ACCOUNTS = data.ACCOUNTS || [];
@@ -764,10 +662,10 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
       SETTINGS = data.SETTINGS || { currency: 'QAR' };
       ACCOUNTS.forEach(a => { if (a.subcategory === undefined) a.subcategory = ''; });
       TRANSACTIONS.forEach(t => { if (t.subcategory === undefined) t.subcategory = ''; });
-      await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-      await writeToSheets(KEYS.BALANCES, BALANCES);
-      await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
-      await writeToSheets(KEYS.SETTINGS, SETTINGS);
+      write(LS_ACCOUNTS, ACCOUNTS);
+      write(LS_BALANCES, BALANCES);
+      write(LS_TRANSACTIONS, TRANSACTIONS);
+      write(LS_SETTINGS, SETTINGS);
       document.getElementById('currencySel').value = SETTINGS.currency || 'QAR';
       refreshMonthPicker();
       const months = Object.keys(BALANCES);
@@ -781,52 +679,65 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
 });
 
 document.getElementById('importCsvBtn').addEventListener('click', () => document.getElementById('importCsvFile').click());
-document.getElementById('importCsvFile').addEventListener('change', async (e) => {
+document.getElementById('importCsvFile').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = async () => {
+  reader.onload = () => {
     try {
-      const lines = reader.result.split('\n').map(line => line.split(',').map(cell => cell.replace(/^"|"$/g, '')));
-      const headers = lines[0];
-      if (headers.join(',') !== 'Type,Category,Subcategory,Name,Amount,Month') {
-        alert('Invalid CSV format. Expected headers: Type,Category,Subcategory,Name,Amount,Month');
+      const lines = reader.result.split('\n').filter(x => x.trim().length).map(line => {
+        // split CSV respecting quotes
+        const out = [];
+        let cur = '', inQ = false;
+        for (let i=0;i<line.length;i++){
+          const ch=line[i];
+          if (ch === '"' ) {
+            if (inQ && line[i+1] === '"') { cur+='"'; i++; }
+            else inQ = !inQ;
+          } else if (ch === ',' && !inQ) { out.push(cur); cur=''; }
+          else cur += ch;
+        }
+        out.push(cur);
+        return out;
+      });
+      const headers = lines[0].map(h => h.replace(/^"|"$/g, ''));
+      if (headers.join(',') !== 'Type,Category,Subcategory,Name,Amount,Month,Note') {
+        alert('Invalid CSV format. Expected headers: Type,Category,Subcategory,Name,Amount,Month,Note');
         return;
       }
       let successCount = 0;
-      for (const row of lines.slice(1)) {
+      lines.slice(1).forEach(row => {
         const tx = {
           type: row[0],
           category: sanitize(row[1]),
           subcategory: sanitize(row[2]) || '',
           name: sanitize(row[3]) || '',
           amount: parseFloat(row[4]),
-          month: row[5]
+          month: row[5],
+          note: row[6] ? row[6].trim() : ''
         };
         if (tx.type && ['Asset', 'Liability'].includes(tx.type) && tx.category && !isNaN(tx.amount) && tx.month.match(/^\d{4}-\d{2}$/)) {
-          if (await addBSLine(tx)) successCount++;
+          if (addBSLine(tx)) successCount++;
         }
-      }
+      });
       refreshMonthPicker();
       render(document.getElementById('viewMonth').value);
       alert(`Imported ${successCount} transactions successfully!`);
-    } catch {
+    } catch (err) {
+      console.error(err);
       alert('Error reading CSV file.');
     }
   };
   reader.readAsText(file);
 });
 
-document.getElementById('resetBtn').addEventListener('click', async () => {
+document.getElementById('resetBtn').addEventListener('click', () => {
   if (!confirm('This will clear ALL data. A JSON backup will be downloaded first. Continue?')) return;
   const backup = { ACCOUNTS, BALANCES, TRANSACTIONS, SETTINGS, version: DATA_VERSION };
-  await writeToSheets('backup_' + Date.now(), backup);
   downloadBlob('backup_before_reset.json', JSON.stringify(backup, null, 2), 'application/json');
   ACCOUNTS = []; BALANCES = {}; TRANSACTIONS = [];
-  await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-  await writeToSheets(KEYS.BALANCES, BALANCES);
-  await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
-  await setLastSel({ type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
+  write(LS_ACCOUNTS, ACCOUNTS); write(LS_BALANCES, BALANCES); write(LS_TRANSACTIONS, TRANSACTIONS);
+  setLastSel({ type: 'Asset', category: '', subcategory: '', name: '', month: new Date().toISOString().slice(0,7) });
   refreshMonthPicker();
   updateCategoryDropdown();
   const m = new Date().toISOString().slice(0,7);
@@ -835,7 +746,7 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
 
 // --- Form events --- //
 const catSelEl = document.getElementById('bsCategory');
-catSelEl.addEventListener('change', async (e) => {
+catSelEl.addEventListener('change', (e) => {
   const val = e.target.value;
   if (val === 'new') {
     document.getElementById('newCategory').classList.remove('hidden');
@@ -843,37 +754,37 @@ catSelEl.addEventListener('change', async (e) => {
     document.getElementById('newSubcat').classList.remove('hidden');
     document.getElementById('bsName').innerHTML = '<option value="">(none)</option><option value="new">➕ New</option>';
     document.getElementById('newName').classList.remove('hidden');
-    await setLastSel({ category: '' });
+    setLastSel({ category: '' });
   } else {
     document.getElementById('newCategory').classList.add('hidden');
     updateSubcatDropdown(val);
     document.getElementById('newSubcat').classList.add('hidden');
     document.getElementById('newName').classList.add('hidden');
-    await setLastSel({ category: val });
+    setLastSel({ category: val });
   }
 });
 
-document.getElementById('bsSubcat').addEventListener('change', async (e) => {
+document.getElementById('bsSubcat').addEventListener('change', (e) => {
   const category = document.getElementById('bsCategory').value;
   if (e.target.value === 'new') {
     document.getElementById('newSubcat').classList.remove('hidden');
     document.getElementById('bsName').innerHTML = '<option value="">(none)</option><option value="new">➕ New</option>';
     document.getElementById('newName').classList.add('hidden');
-    await setLastSel({ subcategory: '' });
+    setLastSel({ subcategory: '' });
   } else {
     document.getElementById('newSubcat').classList.add('hidden');
     updateNameDropdown(category, e.target.value || '');
-    await setLastSel({ subcategory: e.target.value || '' });
+    setLastSel({ subcategory: e.target.value || '' });
   }
 });
 
-document.getElementById('bsName').addEventListener('change', async (e) => {
+document.getElementById('bsName').addEventListener('change', (e) => {
   if (e.target.value === 'new') {
     document.getElementById('newName').classList.remove('hidden');
-    await setLastSel({ name: '' });
+    setLastSel({ name: '' });
   } else {
     document.getElementById('newName').classList.add('hidden');
-    await setLastSel({ name: e.target.value || '' });
+    setLastSel({ name: e.target.value || '' });
   }
 });
 
@@ -883,23 +794,27 @@ document.getElementById('bsForm').addEventListener('submit', async e => {
   let category = document.getElementById('bsCategory').value;
   let subcategory = document.getElementById('bsSubcat').value;
   let name = document.getElementById('bsName').value;
+  let note = document.getElementById('bsNote') ? document.getElementById('bsNote').value : '';
   if (category === 'new') category = sanitize(document.getElementById('newCategory').value);
   if (subcategory === 'new') subcategory = sanitize(document.getElementById('newSubcat').value);
   if (name === 'new') name = sanitize(document.getElementById('newName').value);
   const amount = parseFloat(document.getElementById('bsAmount').value);
   const month = document.getElementById('bsMonth').value;
-  if (!category || isNaN(amount) || amount === 0 || !month) return alert('Please fill all required fields. Amount cannot be zero.');
+  if (!category || isNaN(amount) || !month) return alert('Please fill all required fields.');
 
   if (editId) {
     const oldTx = TRANSACTIONS.find(t => t.id === editId);
-    if (oldTx) await reverseTransaction(oldTx);
+    if (oldTx) reverseTransaction(oldTx);
   }
 
-  if (await addBSLine({ id: editId, type, category, subcategory, name, amount, month })) {
+  if (addBSLine({ id: editId, type, category, subcategory, name, amount, month, note })) {
+    // Fire-and-forget cloud save
+    saveToGoogleSheets({ id: editId || undefined, type, category, subcategory, name, amount, month, note }).catch(()=>{});
     editId = null;
     refreshMonthPicker(month);
     render(month);
     document.getElementById('bsAmount').value = '';
+    if (document.getElementById('bsNote')) document.getElementById('bsNote').value = '';
     document.getElementById('newCategory').classList.add('hidden');
     document.getElementById('newSubcat').classList.add('hidden');
     document.getElementById('newName').classList.add('hidden');
@@ -907,50 +822,47 @@ document.getElementById('bsForm').addEventListener('submit', async e => {
 });
 
 // --- Settings --- //
-document.getElementById('currencySel').addEventListener('change', async (e) => {
+document.getElementById('currencySel').addEventListener('change', (e) => {
   SETTINGS.currency = e.target.value;
-  await writeToSheets(KEYS.SETTINGS, SETTINGS);
+  write(LS_SETTINGS, SETTINGS);
   const m = document.getElementById('viewMonth').value;
   render(m);
 });
 
 const typeSel = document.getElementById('bsType');
 const monthInp = document.getElementById('bsMonth');
-typeSel.addEventListener('change', async (e) => await setLastSel({ type: e.target.value }));
-monthInp.addEventListener('change', async (e) => await setLastSel({ month: e.target.value }));
-
-async function setLastSel(partial) {
-  LAST_SEL = { ...LAST_SEL, ...partial };
-  await writeToSheets(KEYS.LASTSEL, LAST_SEL);
-}
+typeSel.addEventListener('change', (e) => setLastSel({ type: e.target.value }));
+monthInp.addEventListener('change', (e) => setLastSel({ month: e.target.value }));
 
 // --- Month change & copy last month --- //
 document.getElementById('viewMonth').addEventListener('change', e => render(e.target.value));
-document.getElementById('addCurrentMonthBtn').addEventListener('click', async () => {
+document.getElementById('addCurrentMonthBtn').addEventListener('click', () => {
   const m = new Date().toISOString().slice(0,7);
   if (!BALANCES[m]) BALANCES[m] = {};
-  await writeToSheets(KEYS.BALANCES, BALANCES);
+  write(LS_BALANCES, BALANCES);
   refreshMonthPicker(m);
   render(m);
 });
-document.getElementById('copyLastMonthBtn').addEventListener('click', async () => {
+document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
   const months = Array.from(new Set(Object.keys(BALANCES).concat([new Date().toISOString().slice(0,7)]))).sort();
   if (!months.length) return alert("No previous month to copy.");
   const current = document.getElementById('viewMonth').value || months[months.length - 1];
   const idx = months.indexOf(current) - 1;
   if (idx < 0) return alert("No previous month data.");
   const prev = months[idx];
-  for (const t of TRANSACTIONS.filter(t => t.month === prev)) {
-    await addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current, note: "Carried Forward" });
-  }
+  TRANSACTIONS.filter(t => t.month === prev).forEach(t => {
+    addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current, note: "Carried Forward" });
+  });
+  write(LS_BALANCES, BALANCES);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   render(current);
   alert("Copied last month's data!");
 });
-document.getElementById('deleteAllTxBtn').addEventListener('click', async () => {
+document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
   const month = document.getElementById('viewMonth').value;
   if (!month) return;
   if (confirm(`Delete ALL transactions for ${month}? This cannot be undone!`)) {
-    await deleteAllForMonth(month);
+    deleteAllForMonth(month);
   }
 });
 
@@ -961,32 +873,14 @@ const closeModalBtn = document.getElementById('closeModalBtn');
 const saveChangesBtn = document.getElementById('saveCategoryChangesBtn');
 const categoryListDiv = document.getElementById('categoryList');
 
-manageBtn.addEventListener('click', async () => {
-  await hydrateAccountsFromTransactions();
+manageBtn.addEventListener('click', () => {
+  hydrateAccountsFromTransactions();
   renderCategoryManager();
   modal.style.display = 'block';
 });
 closeModalBtn.addEventListener('click', () => { modal.style.display = 'none'; });
 window.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
-modal.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') modal.style.display = 'none';
-});
-
-async function hydrateAccountsFromTransactions() {
-  let touched = false;
-  for (const t of TRANSACTIONS) {
-    const type = t.type;
-    const category = t.category;
-    const sub = (t.subcategory || '');
-    const nm = (t.name || '');
-    const exists = ACCOUNTS.some(a => a.type === type && a.category === category && (a.subcategory||'') === sub && (a.name||'') === nm);
-    if (!exists) {
-      ACCOUNTS.push({ id: uuid(), type, category, subcategory: sub, name: nm });
-      touched = true;
-    }
-  }
-  if (touched) await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-}
+modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.style.display = 'none'; });
 
 function renderCategoryManager() {
   categoryListDiv.innerHTML = '';
@@ -1020,8 +914,8 @@ function renderCategoryManager() {
     catDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
     catDeleteBtn.textContent = 'Delete';
     catDeleteBtn.setAttribute('aria-label', `Delete category ${cat}`);
-    catDeleteBtn.addEventListener('click', async () => {
-      if (await deleteCategory(cat)) {
+    catDeleteBtn.addEventListener('click', () => {
+      if (deleteCategory(cat)) {
         renderCategoryManager();
         alert(`Category "${cat}" deleted.`);
       }
@@ -1054,8 +948,8 @@ function renderCategoryManager() {
       subDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
       subDeleteBtn.textContent = 'Delete';
       subDeleteBtn.setAttribute('aria-label', `Delete subcategory ${sub || 'none'} in ${cat}`);
-      subDeleteBtn.addEventListener('click', async () => {
-        if (await deleteCategory(cat, sub)) {
+      subDeleteBtn.addEventListener('click', () => {
+        if (deleteCategory(cat, sub)) {
           renderCategoryManager();
           alert(`Subcategory "${sub || 'none'}" in "${cat}" deleted.`);
         }
@@ -1084,13 +978,14 @@ function renderCategoryManager() {
           nameDeleteBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded ml-2';
           nameDeleteBtn.textContent = 'Delete';
           nameDeleteBtn.setAttribute('aria-label', `Delete name ${acc.name || 'none'} in ${cat} ${sub || 'none'}`);
-          nameDeleteBtn.addEventListener('click', async () => {
-            if (await deleteCategory(cat, sub, acc.name)) {
+          nameDeleteBtn.addEventListener('click', () => {
+            if (deleteCategory(cat, sub, acc.name)) {
               renderCategoryManager();
               alert(`Name "${acc.name || 'none'}" in "${cat} ${sub || 'none'}" deleted.`);
             }
           });
           nameBox.appendChild(nameInput);
+          nameDeleteBtn.addEventListener
           nameBox.appendChild(nameDeleteBtn);
           subBox.appendChild(nameBox);
         });
@@ -1106,50 +1001,50 @@ function renderCategoryManager() {
   }
 }
 
-saveChangesBtn.addEventListener('click', async () => {
+saveChangesBtn.addEventListener('click', () => {
   const catInputs = categoryListDiv.querySelectorAll('input[data-cat]:not([data-sub])');
-  for (const catInput of catInputs) {
+  catInputs.forEach(catInput => {
     const oldCat = catInput.dataset.cat;
     const newCat = sanitize(catInput.value);
-    if (!newCat || newCat === oldCat) continue;
+    if (!newCat || newCat === oldCat) return;
     if (!newCat.match(/^[a-zA-Z0-9 ]+$/)) {
       alert(`Invalid category name: "${newCat}". Use letters, numbers, or spaces.`);
       return;
     }
     ACCOUNTS.filter(a => a.category === oldCat).forEach(a => a.category = newCat);
     TRANSACTIONS.filter(t => t.category === oldCat).forEach(t => t.category = newCat);
-  }
+  });
 
   const subInputs = categoryListDiv.querySelectorAll('input[data-sub]');
-  for (const subInput of subInputs) {
+  subInputs.forEach(subInput => {
     const cat = subInput.dataset.cat;
     const oldSub = subInput.dataset.sub;
     const newSub = sanitize(subInput.value);
-    if (newSub === oldSub) continue;
+    if (newSub === oldSub) return;
     if (newSub && !newSub.match(/^[a-zA-Z0-9 ]+$/)) {
       alert(`Invalid subcategory name: "${newSub}". Use letters, numbers, or spaces.`);
       return;
     }
     ACCOUNTS.filter(a => a.category === cat && (a.subcategory||'') === oldSub).forEach(a => a.subcategory = newSub);
     TRANSACTIONS.filter(t => t.category === cat && (t.subcategory||'') === oldSub).forEach(t => t.subcategory = newSub);
-  }
+  });
 
   const nameInputs = categoryListDiv.querySelectorAll('input[data-acc-id]');
-  for (const inp of nameInputs) {
+  nameInputs.forEach(inp => {
     const id = inp.dataset.accId;
     const newName = sanitize(inp.value);
     const acc = ACCOUNTS.find(a => a.id === id);
-    if (!acc || newName === acc.name) continue;
+    if (!acc || newName === acc.name) return;
     if (newName && !newName.match(/^[a-zA-Z0-9 ]+$/)) {
       alert(`Invalid name: "${newName}". Use letters, numbers, or spaces.`);
       return;
     }
     acc.name = newName;
-    TRANSACTIONS.filter(t => t.mainId === id).forEach(t => t.name = newName);
-  }
+    TRANSACTIONS.filter(t => t.mainId === id).forEach(t => { t.name = newName; });
+  });
 
-  await writeToSheets(KEYS.ACCOUNTS, ACCOUNTS);
-  await writeToSheets(KEYS.TRANSACTIONS, TRANSACTIONS);
+  write(LS_ACCOUNTS, ACCOUNTS);
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   modal.style.display = 'none';
   const currentMonth = document.getElementById('viewMonth').value || allMonths().pop() || '';
   refreshMonthPicker(currentMonth);
@@ -1159,12 +1054,35 @@ saveChangesBtn.addEventListener('click', async () => {
 
 // --- Init --- //
 (async function init() {
-  await initState();
   const today = new Date();
   const yM = today.toISOString().slice(0, 7);
   document.getElementById('bsMonth').value = LAST_SEL.month || yM;
   document.getElementById('bsType').value = LAST_SEL.type || 'Asset';
   document.getElementById('currencySel').value = SETTINGS.currency || 'QAR';
+
+  // Try cloud load; if available, hydrate local from cloud
+  const cloudTx = await loadAllFromGoogleSheets();
+  if (Array.isArray(cloudTx)) {
+    TRANSACTIONS = cloudTx.map(t => ({
+      id: t.id || uuid(),
+      type: t.type,
+      category: t.category,
+      subcategory: t.subcategory || '',
+      name: t.name || '',
+      amount: Number(t.amount),
+      month: t.month,
+      mainId: t.mainId || undefined,   // may not exist in sheet
+      offsetId: t.offsetId || undefined,
+      note: t.note || ''
+    }));
+    // rebuild accounts and balances from transactions
+    ACCOUNTS = [];
+    hydrateAccountsFromTransactions();
+    rebuildBalances();
+    write(LS_TRANSACTIONS, TRANSACTIONS);
+    write(LS_ACCOUNTS, ACCOUNTS);
+    write(LS_BALANCES, BALANCES);
+  }
 
   refreshMonthPicker();
   const months = Object.keys(BALANCES);
@@ -1178,5 +1096,6 @@ saveChangesBtn.addEventListener('click', async () => {
   }
 })();
 </script>
+
 </body>
 </html>
