@@ -110,7 +110,8 @@
   <div class="bg-white p-4 rounded shadow overflow-x-auto">
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-lg sm:text-xl font-semibold">Transactions</h2>
-      <button id="deleteAllTxBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded" aria-label="Clear all transactions for month">🗑️ Clear Month</button>
+      <button id="deleteAllTxBtn" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded" aria-label="Clear all transactions for month">🗑️ Clear Month</button>
+
     </div>
     <table class="w-full border-collapse sticky-header min-w-[820px]">
       <thead>
@@ -144,7 +145,7 @@
 
 <script>
 // --- GOOGLE SHEETS SETTINGS --- //
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwlghZ1jUoLJ1i5a6UDlL706OAAjTHwnUnVxQcu4SUOshzASllb8goNkMT8ytHaxtzA/exec";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxezqnrqjlgXxXOJHTmt058dSAvWLIu0WAUg1dNrhf2JEOTJxA26DSMQPFRc5QxIX2i/exec";
 
 // --- Storage keys & helpers --- //
 const DATA_VERSION = '1.3';	
@@ -186,6 +187,19 @@ async function saveToGoogleSheets(entry) {
     return null; // don’t block local save
   }
 }
+
+function normalizeMonth(val) {
+    if (!val) return '';
+    const m = String(val).trim();
+    if (/^\d{4}-\d{2}$/.test(m)) return m;
+    const parts = m.split('-');
+    if (parts.length >= 2) {
+        return `${parts[0]}-${('0' + parts[1]).slice(-2)}`;
+    }
+    return m;
+}
+
+
 
 
 async function loadAllFromGoogleSheets() {
@@ -321,12 +335,31 @@ if (name && !name.match(/^[\p{L}\p{N} /]+$/u)) { alert('Name must contain only l
 function deleteTransaction(id) {
   const tx = TRANSACTIONS.find(t => t.id === id);
   if (!tx) return;
-  reverseTransaction(tx);
-  TRANSACTIONS = TRANSACTIONS.filter(t => t.id !== id);
-  write(LS_BALANCES, BALANCES);
-  write(LS_TRANSACTIONS, TRANSACTIONS);
+
+  // Build a true reversal: flip the sign of whatever was posted
+  const reversal = {
+    type: tx.type,
+    category: tx.category,
+    subcategory: tx.subcategory || '',
+    name: tx.name || '',
+    amount: -Number(tx.amount || 0),   // <— flip sign; works for + or - originals
+    month: tx.month,                   // or use normalizeMonth(new Date().toISOString().slice(0,7)) if you prefer “today’s” month
+    note: `Reversal of ${tx.id}`
+  };
+
+  // Add reversal locally (this also writes LS_* via addBSLine)
+  if (addBSLine(reversal)) {
+    // Save the reversal to Google Sheets (don’t block UI)
+    saveToGoogleSheets(reversal).catch(()=>{});
+  }
+
+  // IMPORTANT: Do NOT remove the original anymore
+  // No reverseTransaction(tx) and no filter-out of the original
+
+  // Re-render the month so both original + reversal show
   render(tx.month);
 }
+
 
 function deleteAllForMonth(month) {
   const list = TRANSACTIONS.filter(t => t.month === month);
@@ -484,7 +517,7 @@ function renderTransactions(month) {
       <td class="border p-2">${formatMoney(tx.amount)}</td>
       <td class="border p-2">${tx.note ? tx.note : ''}</td>
       <td class="border p-2 space-x-2">
-        <button class="bg-blue-500 text-white px-2 py-1 rounded" onclick="startEdit('${tx.id}')" aria-label="Edit transaction ${tx.id}">Edit</button>
+ 
         <button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteTransaction('${tx.id}')" aria-label="Delete transaction ${tx.id}">Delete</button>
       </td>
     `;
@@ -809,7 +842,7 @@ document.getElementById('bsForm').addEventListener('submit', async e => {
   if (subcategory === 'new') subcategory = sanitize(document.getElementById('newSubcat').value);
   if (name === 'new') name = sanitize(document.getElementById('newName').value);
   const amount = parseFloat(document.getElementById('bsAmount').value);
-  const month = document.getElementById('bsMonth').value;
+  const month = normalizeMonth(document.getElementById('bsMonth').value);
   if (!category || isNaN(amount) || !month) return alert('Please fill all required fields.');
 
   if (editId) {
@@ -853,28 +886,56 @@ document.getElementById('addCurrentMonthBtn').addEventListener('click', () => {
   refreshMonthPicker(m);
   render(m);
 });
-document.getElementById('copyLastMonthBtn').addEventListener('click', () => {
+document.getElementById('copyLastMonthBtn').addEventListener('click', async () => {
   const months = Array.from(new Set(Object.keys(BALANCES).concat([new Date().toISOString().slice(0,7)]))).sort();
   if (!months.length) return alert("No previous month to copy.");
+
   const current = document.getElementById('viewMonth').value || months[months.length - 1];
   const idx = months.indexOf(current) - 1;
   if (idx < 0) return alert("No previous month data.");
+
   const prev = months[idx];
-  TRANSACTIONS.filter(t => t.month === prev).forEach(t => {
-    addBSLine({ type: t.type, category: t.category, subcategory: t.subcategory, name: t.name, amount: t.amount, month: current, note: "Carried Forward" });
-  });
+  const prevRows = TRANSACTIONS.filter(t => t.month === prev);
+  if (!prevRows.length) return alert("No transactions found in previous month.");
+
+  // Copy locally + queue cloud writes
+  const saves = [];
+  let added = 0;
+
+  for (const t of prevRows) {
+    const newTx = {
+      type: t.type,
+      category: t.category,
+      subcategory: t.subcategory,
+      name: t.name,
+      amount: t.amount,
+      month: normalizeMonth(current),
+      note: "Carried Forward"
+      // id/mainId/offsetId omitted; server will fill id, and you rebuild locally
+    };
+    if (addBSLine(newTx)) {
+      added++;
+      // fire a save to Google Sheets for each carried-forward row
+      saves.push(saveToGoogleSheets(newTx));
+    }
+  }
+
+  // Persist local and refresh UI
   write(LS_BALANCES, BALANCES);
   write(LS_TRANSACTIONS, TRANSACTIONS);
   render(current);
-  alert("Copied last month's data!");
-});
-document.getElementById('deleteAllTxBtn').addEventListener('click', () => {
-  const month = document.getElementById('viewMonth').value;
-  if (!month) return;
-  if (confirm(`Delete ALL transactions for ${month}? This cannot be undone!`)) {
-    deleteAllForMonth(month);
+
+  // Optionally wait for cloud writes to finish (shows if any failed)
+  const results = await Promise.allSettled(saves);
+  const failed = results.filter(r => r.status === 'rejected' || (r.value && r.value.status !== 'added')).length;
+
+  if (failed === 0) {
+    alert(`Copied ${added} transaction(s) to ${current} and saved to Google Sheets.`);
+  } else {
+    alert(`Copied ${added} locally. ${failed} save(s) to Google Sheets failed (check console).`);
   }
 });
+
 
 // --- Manage Categories modal --- //
 const manageBtn = document.getElementById('manageCategoriesBtn');
@@ -1080,7 +1141,7 @@ saveChangesBtn.addEventListener('click', () => {
       subcategory: t.subcategory || '',
       name: t.name || '',
       amount: Number(t.amount),
-      month: t.month,
+      month: normalizeMonth(t.month),
       mainId: t.mainId || undefined,   // may not exist in sheet
       offsetId: t.offsetId || undefined,
       note: t.note || ''
