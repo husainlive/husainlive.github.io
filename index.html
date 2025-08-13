@@ -144,10 +144,10 @@
 
 <script>
 // --- GOOGLE SHEETS SETTINGS --- //
-const GOOGLE_SCRIPT_URL = "	";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwlghZ1jUoLJ1i5a6UDlL706OAAjTHwnUnVxQcu4SUOshzASllb8goNkMT8ytHaxtzA/exec";
 
 // --- Storage keys & helpers --- //
-const DATA_VERSION = '1.3';
+const DATA_VERSION = '1.3';	
 const LS_ACCOUNTS = 'bs_accounts_v1';
 const LS_BALANCES = 'bs_balances_v1';
 const LS_TRANSACTIONS = 'bs_transactions_v1';
@@ -252,11 +252,20 @@ function reverseTransaction(tx) {
 
 function rebuildBalances() {
   BALANCES = {};
-  TRANSACTIONS.forEach(t => {
+  TRANSACTIONS = TRANSACTIONS.map(t => {
+    // Ensure the proper accounts exist and capture their IDs
+    const main = getOrCreateAccount(t.type, t.category, t.subcategory || '', t.name || '');
+    const offsetType = t.type === 'Asset' ? 'Liability' : 'Asset';
+    const offset = getOrCreateAccount(offsetType, 'Offset', '', 'AutoOffset');
+
     const sign = t.type === 'Asset' ? 1 : -1;
-    post(t.mainId, t.month, sign * t.amount);
-    post(t.offsetId, t.month, -sign * t.amount);
+    post(main.id, t.month, sign * Number(t.amount || 0));
+    post(offset.id, t.month, -sign * Number(t.amount || 0));
+
+    // backfill ids onto the transaction
+    return { ...t, mainId: main.id, offsetId: offset.id };
   });
+  write(LS_TRANSACTIONS, TRANSACTIONS);
   write(LS_BALANCES, BALANCES);
 }
 
@@ -280,9 +289,10 @@ function hydrateAccountsFromTransactions() {
 // Single, authoritative addBSLine
 function addBSLine({ id, type, category, subcategory, name, amount, month, note }) {
   const fallbackName = sanitize(name) || '';
-  if (!category || !category.match(/^[a-zA-Z0-9 ]+$/)) { alert('Category must be non-empty and contain only letters, numbers, or spaces.'); return false; }
-  if (subcategory && !subcategory.match(/^[a-zA-Z0-9 ]+$/)) { alert('Subcategory must contain only letters, numbers, or spaces.'); return false; }
-  if (name && !name.match(/^[a-zA-Z0-9 /]+$/)) { alert('Name must contain only letters, numbers, spaces, or slashes.'); return false; }
+  if (!category || !category.match(/^[\p{L}\p{N} ]+$/u)) { alert('Category must be non-empty and contain only letters (any language), numbers, or spaces.'); return false; }
+if (subcategory && !subcategory.match(/^[\p{L}\p{N} ]+$/u)) { alert('Subcategory must contain only letters (any language), numbers, or spaces.'); return false; }
+if (name && !name.match(/^[\p{L}\p{N} /]+$/u)) { alert('Name must contain only letters (any language), numbers, spaces, or slashes.'); return false; }
+
   if (isNaN(amount)) { alert('Amount must be a valid number.'); return false; }
   if (amount === 0) { if (!confirm('Amount is zero. Do you want to continue?')) return false; }
 
